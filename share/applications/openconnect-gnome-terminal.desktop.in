@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=VPN Terminal
+Comment=Open a terminal using the VPN profile
+Exec=@TERMINAL_COMMAND@
+Icon=utilities-terminal
+Terminal=@NEEDS_TERMINAL@
+Type=Application
+Categories=System;TerminalEmulator;

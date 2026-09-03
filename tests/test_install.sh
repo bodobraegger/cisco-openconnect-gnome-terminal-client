@@ -13,8 +13,30 @@ export AUTOSTART_DIR="$WORKSPACE/autostart"
 export PALETTE_DIR="$WORKSPACE/palettes"
 export CONFIG_DIR="$WORKSPACE/config"
 
+# Stub ptyxis and gsettings so the test is deterministic on any host and never
+# writes to the real dconf database.
+FAKE_BIN="$WORKSPACE/fakebin"
+mkdir -p "$FAKE_BIN"
+printf '#!/bin/sh\nexit 0\n' > "$FAKE_BIN/ptyxis"
+cat > "$FAKE_BIN/gsettings" <<'GSETTINGS'
+#!/bin/bash
+STORE="$WORKSPACE/gsettings-store"
+touch "$STORE"
+case "$1" in
+    get) grep -m1 "^$2 $3 " "$STORE" | cut -d' ' -f3- || echo "@as []" ;;
+    set) sed -i "\|^$2 $3 |d" "$STORE"; echo "$2 $3 $4" >> "$STORE" ;;
+esac
+exit 0
+GSETTINGS
+chmod +x "$FAKE_BIN/ptyxis" "$FAKE_BIN/gsettings"
+export WORKSPACE
+export PATH="$FAKE_BIN:$PATH"
+
 echo "install:"
 INSTALL_OUTPUT=$(./install.sh install 2>&1)
+assert_contains "detects ptyxis" "$INSTALL_OUTPUT" "Launcher will use: ptyxis"
+assert_contains "provisions a Ptyxis profile" "$INSTALL_OUTPUT" "Ptyxis profile:"
+PROFILE_UUID=$(echo "$INSTALL_OUTPUT" | grep -oE 'Ptyxis profile: [0-9a-f]{32}' | grep -oE '[0-9a-f]{32}')
 
 assert_equals "session command is a symlink" \
     "$([ -L "$BIN_DIR/openconnect-session" ] && echo yes || echo no)" yes
@@ -29,6 +51,13 @@ LAUNCHER=$(cat "$APPLICATIONS_DIR/openconnect-gnome.desktop")
 assert_not_contains "no unrendered placeholder in launcher" "$LAUNCHER" "@"
 assert_contains "launcher execs the installed session command" \
     "$LAUNCHER" "$BIN_DIR/openconnect-session"
+assert_contains "launcher selects the VPN profile" \
+    "$LAUNCHER" "--tab-with-profile=$PROFILE_UUID"
+
+echo "profile provisioning is idempotent:"
+SECOND_OUTPUT=$(./install.sh install 2>&1)
+SECOND_UUID=$(echo "$SECOND_OUTPUT" | grep -oE 'Ptyxis profile: [0-9a-f]{32}' | grep -oE '[0-9a-f]{32}')
+assert_equals "reuses the existing profile" "$SECOND_UUID" "$PROFILE_UUID"
 assert_contains "launcher declares an application" "$LAUNCHER" "Type=Application"
 
 AUTOSTART=$(cat "$AUTOSTART_DIR/openconnect-gnome-tray.desktop")
