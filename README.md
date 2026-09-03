@@ -87,17 +87,25 @@ Set it to `no` to keep the tunnel tied to the terminal window instead.
 
 ## Tray indicator
 
-Polls tunnel state and shows connected, connecting, or disconnected, along with
-whether IPv6 is currently blackholed.
+The tray is the only control surface, and it carries exactly one action for the
+current state:
 
-- **Connect** launches the installed desktop entry, so the launcher command
-  lives in exactly one place.
-- **Open Terminal** opens a VPN-coloured terminal in every state. In background
-  mode there is no session window to return to, so the tray is the only route
-  back to one.
-- **Disconnect** goes through `pkexec`; the guardian then withdraws the
-  blackhole, so a tray-initiated disconnect still ends with the network
-  restored.
+| State | Shows | Action |
+| --- | --- | --- |
+| Connected | `Connected on tun0 (10.249.65.41)` | **Quit VPN** |
+| Connecting | `Connecting, no tunnel address yet` | **Quit VPN** |
+| Disconnected | `Disconnected` | **Connect...** |
+
+There is deliberately no action that quits the indicator alone. A tunnel running
+with no window and no tray icon is invisible, which is the state this tray
+exists to prevent. **Quit VPN** stops the tunnel through `pkexec`; the guardian
+then withdraws the blackhole, so stopping from the tray still ends with the
+network restored.
+
+A second line appears only when something needs attention: IPv6 open while
+connected, or a blackhole still installed after the tunnel has gone. After any
+action the menu refreshes once a second for a few seconds, so it never sits on a
+stale `Connected`.
 
 Requires the `AppIndicator3` typelib and, on GNOME, an AppIndicator extension.
 

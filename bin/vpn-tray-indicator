@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Shows VPN tunnel state in the GNOME top bar and offers connect/disconnect."""
+"""Shows VPN tunnel state in the GNOME top bar and is the only control surface.
+
+Every menu action acts on the VPN itself. There is deliberately no action that
+quits the indicator alone: a tunnel running with no window and no tray icon is
+invisible, which is exactly the state this tray exists to prevent.
+"""
 
 from __future__ import annotations
 
@@ -18,11 +23,8 @@ from gi.repository import AppIndicator3, GLib, Gio, Gtk  # noqa: E402
 
 from openconnect_gnome.presentation import (  # noqa: E402
     CONNECT_LABEL,
-    DISCONNECT_LABEL,
     FALLBACK_ICON,
-    OPEN_TERMINAL_LABEL,
-    QUIT_LABEL,
-    QUIT_LABEL_IDLE,
+    QUIT_VPN_LABEL,
     action_labels,
     choose_icon,
     status_labels,
@@ -32,13 +34,14 @@ from openconnect_gnome.status import read_tunnel_status  # noqa: E402
 INDICATOR_ID = "openconnect-gnome-tray"
 POLL_INTERVAL_SECONDS = 3
 LAUNCHER_DESKTOP_ID = "openconnect-gnome.desktop"
-TERMINAL_DESKTOP_ID = "openconnect-gnome-terminal.desktop"
-DISCONNECT_COMMAND = ("pkexec", "pkill", "-x", "openconnect")
+QUIT_VPN_COMMAND = ("pkexec", "pkill", "-x", "openconnect")
 NOTIFY_COMMAND = ("notify-send", "--app-name=VPN")
 
-
-class LauncherNotInstalledError(RuntimeError):
-    """The .desktop entry the tray launches is missing or not yet indexed."""
+# After acting on the tunnel the state changes within a second or two, so the
+# menu is refreshed faster than the idle poll for a short window rather than
+# leaving a stale "Connected" sitting there.
+SETTLE_INTERVAL_SECONDS = 1
+SETTLE_REFRESHES = 8
 
 
 class VpnTrayIndicator:
@@ -53,11 +56,9 @@ class VpnTrayIndicator:
         self.indicator.set_menu(self.menu)
         self.handlers = {
             CONNECT_LABEL: self.on_connect,
-            DISCONNECT_LABEL: self.on_disconnect,
-            OPEN_TERMINAL_LABEL: self.on_open_terminal,
-            QUIT_LABEL: self.on_quit,
-            QUIT_LABEL_IDLE: self.on_quit,
+            QUIT_VPN_LABEL: self.on_quit_vpn,
         }
+        self.settle_ticks_remaining = 0
         self.refresh()
         GLib.timeout_add_seconds(POLL_INTERVAL_SECONDS, self.on_tick)
 
@@ -68,6 +69,19 @@ class VpnTrayIndicator:
     def on_tick(self) -> bool:
         self.refresh()
         return GLib.SOURCE_CONTINUE
+
+    def on_settle_tick(self) -> bool:
+        self.refresh()
+        self.settle_ticks_remaining -= 1
+        if self.settle_ticks_remaining > 0:
+            return GLib.SOURCE_CONTINUE
+        return GLib.SOURCE_REMOVE
+
+    def start_settling(self) -> None:
+        already_settling = self.settle_ticks_remaining > 0
+        self.settle_ticks_remaining = SETTLE_REFRESHES
+        if not already_settling:
+            GLib.timeout_add_seconds(SETTLE_INTERVAL_SECONDS, self.on_settle_tick)
 
     def refresh(self) -> None:
         status = read_tunnel_status()
@@ -101,39 +115,33 @@ class VpnTrayIndicator:
         except OSError:
             print(f"{summary}: {body}", file=sys.stderr)
 
-    def launch_desktop_entry(self, desktop_id: str, failure_summary: str) -> None:
+    def on_connect(self, _item) -> None:
         # Launching the .desktop entry rather than a hard-coded terminal command
-        # keeps each command definition in exactly one place.
-        entry = Gio.DesktopAppInfo.new(desktop_id)
-        if entry is None:
+        # keeps the launcher definition in exactly one place.
+        launcher = Gio.DesktopAppInfo.new(LAUNCHER_DESKTOP_ID)
+        if launcher is None:
             self.notify(
-                failure_summary, f"{desktop_id} is not installed. Run install.sh."
+                "Cannot start VPN",
+                f"{LAUNCHER_DESKTOP_ID} is not installed. Run install.sh.",
             )
             return
         try:
-            entry.launch(None, None)
+            launcher.launch(None, None)
         except GLib.Error as error:
-            self.notify(failure_summary, error.message)
+            self.notify("Cannot start VPN", error.message)
+            return
+        self.start_settling()
 
-    def on_connect(self, _item) -> None:
-        self.launch_desktop_entry(LAUNCHER_DESKTOP_ID, "Cannot start VPN")
-
-    def on_open_terminal(self, _item) -> None:
-        self.launch_desktop_entry(TERMINAL_DESKTOP_ID, "Cannot open terminal")
-
-    def on_disconnect(self, _item) -> None:
+    def on_quit_vpn(self, _item) -> None:
         try:
-            subprocess.Popen(DISCONNECT_COMMAND)
+            subprocess.Popen(QUIT_VPN_COMMAND)
         except OSError as error:
-            self.notify("Cannot disconnect", str(error))
+            self.notify("Cannot stop VPN", str(error))
             return
         # The session script's guardian withdraws the IPv6 blackhole once the
-        # openconnect process is gone, so a tray-initiated disconnect still ends
-        # with the network restored.
-        GLib.timeout_add_seconds(1, self.on_tick)
-
-    def on_quit(self, _item) -> None:
-        Gtk.main_quit()
+        # openconnect process is gone, so stopping from here still ends with the
+        # network restored.
+        self.start_settling()
 
 
 def main() -> int:

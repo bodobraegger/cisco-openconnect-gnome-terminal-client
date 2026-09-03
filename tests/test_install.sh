@@ -60,9 +60,8 @@ SECOND_UUID=$(echo "$SECOND_OUTPUT" | grep -oE 'Ptyxis profile: [0-9a-f]{32}' | 
 assert_equals "reuses the existing profile" "$SECOND_UUID" "$PROFILE_UUID"
 assert_contains "launcher declares an application" "$LAUNCHER" "Type=Application"
 
-TERMINAL_ENTRY=$(cat "$APPLICATIONS_DIR/openconnect-gnome-terminal.desktop")
-assert_contains "tray-only terminal entry is hidden from menus" \
-    "$TERMINAL_ENTRY" "NoDisplay=true"
+assert_equals "no stray terminal entry is installed" \
+    "$([ -e "$APPLICATIONS_DIR/openconnect-gnome-terminal.desktop" ] && echo yes || echo no)" no
 
 AUTOSTART=$(cat "$AUTOSTART_DIR/openconnect-gnome-tray.desktop")
 assert_not_contains "no unrendered placeholder in autostart" "$AUTOSTART" "@"

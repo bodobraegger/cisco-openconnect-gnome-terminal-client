@@ -125,16 +125,8 @@ install_all() {
     render_template "$SOURCE_DIR/share/applications/$LAUNCHER_NAME.in" \
         "$APPLICATIONS_DIR/$LAUNCHER_NAME" "$terminal_command" "$needs_terminal"
 
-    # A plain shell in the same profile, so the tray can open a VPN-coloured
-    # terminal without starting a second session.
-    local shell_command
-    if [[ $terminal == ptyxis && -n $profile_uuid ]]; then
-        shell_command="ptyxis --tab-with-profile=$profile_uuid --title=$WINDOW_TITLE"
-    else
-        shell_command="${terminal_command%% -x *}"
-    fi
-    render_template "$SOURCE_DIR/share/applications/$TERMINAL_LAUNCHER_NAME.in" \
-        "$APPLICATIONS_DIR/$TERMINAL_LAUNCHER_NAME" "$shell_command" "$needs_terminal"
+    # The Open Terminal feature was removed; clear any entry an older install left.
+    rm -f "$APPLICATIONS_DIR/$TERMINAL_LAUNCHER_NAME"
     render_template "$SOURCE_DIR/share/autostart/$AUTOSTART_NAME.in" \
         "$AUTOSTART_DIR/$AUTOSTART_NAME" "$terminal_command" "$needs_terminal"
 

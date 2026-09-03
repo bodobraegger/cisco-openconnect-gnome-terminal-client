@@ -1,6 +1,8 @@
 """Turns a TunnelStatus into the labels and icon the tray shows.
 
 Separate from the GTK code so the display logic is testable without a display.
+The tray is the only control surface, so every menu action here acts on the VPN
+itself; there is deliberately no action that touches only the indicator.
 """
 
 from __future__ import annotations
@@ -17,13 +19,10 @@ DISCONNECTED_ICONS = (
 FALLBACK_ICON = "network-workgroup"
 
 CONNECT_LABEL = "Connect..."
-DISCONNECT_LABEL = "Disconnect"
-OPEN_TERMINAL_LABEL = "Open Terminal"
-QUIT_LABEL = "Quit Indicator (VPN stays up)"
-QUIT_LABEL_IDLE = "Quit Indicator"
+QUIT_VPN_LABEL = "Quit VPN"
 
-IPV6_BLACKHOLED_LABEL = "IPv6 blackholed (traffic forced through tunnel)"
-IPV6_OPEN_LABEL = "IPv6 open (traffic may bypass tunnel)"
+IPV6_BYPASS_WARNING = "Warning: IPv6 is open, traffic may bypass the tunnel"
+IPV6_ORPHAN_WARNING = "Warning: IPv6 still blackholed with no tunnel"
 
 
 def icon_candidates(status: TunnelStatus) -> tuple[str, ...]:
@@ -47,23 +46,17 @@ def choose_icon(status: TunnelStatus, icon_exists=lambda name: True) -> str:
 
 
 def status_labels(status: TunnelStatus) -> list[str]:
-    """The non-clickable informational lines at the top of the menu."""
+    """The informational lines. Only states worth acting on get a second line."""
     labels = [status.summary()]
-    if status.connected:
-        labels.append(
-            IPV6_BLACKHOLED_LABEL if status.ipv6_blackholed else IPV6_OPEN_LABEL
-        )
+    if status.connected and not status.ipv6_blackholed:
+        labels.append(IPV6_BYPASS_WARNING)
+    elif not status.process_running and status.ipv6_blackholed:
+        labels.append(IPV6_ORPHAN_WARNING)
     return labels
 
 
 def action_labels(status: TunnelStatus) -> list[str]:
-    """The clickable actions. Only the first depends on whether a tunnel is up.
-
-    Opening a terminal stays available in every state: in background mode there
-    is no session window to go back to, so the tray is the only way to get one.
-    """
+    """One action, matching the single thing worth doing in the current state."""
     if status.process_running:
-        # Quitting the indicator leaves the tunnel up, which is invisible once
-        # the tray is gone, so the label has to say so.
-        return [DISCONNECT_LABEL, OPEN_TERMINAL_LABEL, QUIT_LABEL]
-    return [CONNECT_LABEL, OPEN_TERMINAL_LABEL, QUIT_LABEL_IDLE]
+        return [QUIT_VPN_LABEL]
+    return [CONNECT_LABEL]
