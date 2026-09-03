@@ -1,0 +1,193 @@
+#!/bin/bash
+# Runs an openconnect VPN session and guarantees that every piece of global state
+# it touches is withdrawn again, on every exit path.
+set -uo pipefail
+
+readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/openconnect-gnome"
+readonly CONFIG_FILE="$CONFIG_DIR/config"
+readonly REQUIRED_SETTINGS=(VPN_USER VPN_GATEWAY VPN_AUTHGROUP)
+
+readonly STALE_SESSION_GRACE_SECONDS=5
+readonly IPV6_BLACKHOLE_METRIC=1
+readonly GUARDIAN_TAG='openconnect-gnome-ipv6-guardian'
+readonly GUARDIAN_PIDFILE='/run/openconnect-gnome-ipv6-guardian.pid'
+readonly GUARDIAN_POLL_SECONDS=2
+readonly GUARDIAN_CONNECT_TIMEOUT_SECONDS=180
+
+readonly EXIT_CONFIG_MISSING=2
+readonly EXIT_CONFIG_INCOMPLETE=3
+readonly EXIT_NO_PRIVILEGES=4
+
+load_configuration() {
+    if [[ ! -r $CONFIG_FILE ]]; then
+        echo "No configuration at $CONFIG_FILE" >&2
+        echo "Copy config.example there and edit it." >&2
+        return $EXIT_CONFIG_MISSING
+    fi
+
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+
+    local setting missing=()
+    for setting in "${REQUIRED_SETTINGS[@]}"; do
+        [[ -n ${!setting:-} ]] || missing+=("$setting")
+    done
+
+    if (( ${#missing[@]} > 0 )); then
+        echo "Configuration is missing: ${missing[*]}" >&2
+        return $EXIT_CONFIG_INCOMPLETE
+    fi
+
+    : "${TERMINAL_BACKGROUND_COLOR:=}"
+    : "${BLACKHOLE_IPV6:=yes}"
+}
+
+# OSC 11 sets the terminal background and OSC 111 restores the configured default.
+# Preferred over a dedicated terminal profile because it works in any VTE-based
+# terminal and cannot leave a recoloured profile behind if the session dies.
+apply_terminal_background() {
+    [[ -n $TERMINAL_BACKGROUND_COLOR && -t 1 ]] || return 0
+    printf '\033]11;%s\007' "$TERMINAL_BACKGROUND_COLOR"
+}
+
+restore_terminal_background() {
+    [[ -n $TERMINAL_BACKGROUND_COLOR && -t 1 ]] || return 0
+    printf '\033]111\007'
+}
+
+ipv6_blackhole_enabled() {
+    [[ $BLACKHOLE_IPV6 == yes ]]
+}
+
+enable_ipv6_blackhole() {
+    ipv6_blackhole_enabled || return 0
+    sudo ip -6 route replace unreachable default metric "$IPV6_BLACKHOLE_METRIC"
+}
+
+blackhole_is_present() {
+    ip -6 route show default | grep -q "unreachable .*metric $IPV6_BLACKHOLE_METRIC"
+}
+
+# Addressed by pidfile rather than by pkill -f on the tag: a command-line pattern
+# also matches unrelated processes that merely mention the tag, up to and including
+# the shell that launched this script. The tag is re-checked against the recorded
+# pid so a recycled pid cannot be killed by mistake.
+stop_guardian() {
+    local guardian_pid
+    guardian_pid=$(sudo -n cat "$GUARDIAN_PIDFILE" 2>/dev/null) || return 0
+    [[ $guardian_pid =~ ^[0-9]+$ ]] || return 0
+
+    if sudo -n tr '\0' ' ' < "/proc/$guardian_pid/cmdline" 2>/dev/null | grep -qF "$GUARDIAN_TAG"; then
+        sudo -n kill "$guardian_pid" 2>/dev/null
+    fi
+    sudo -n rm -f "$GUARDIAN_PIDFILE" 2>/dev/null
+    return 0
+}
+
+# A trap cannot run on SIGKILL, a crash, or a power loss, so ownership of the
+# blackhole does not rest on this script alone. setsid detaches the guardian from
+# this process group, so killing the terminal leaves it running, and it withdraws
+# the route once no openconnect process remains. It watches with `pgrep -x`, an
+# exact match on the process name, so it can never match its own command line.
+start_guardian() {
+    ipv6_blackhole_enabled || return 0
+    sudo setsid --fork bash -c "
+        # $GUARDIAN_TAG
+        echo \$\$ > $GUARDIAN_PIDFILE
+        trap 'rm -f $GUARDIAN_PIDFILE' EXIT
+        waited=0
+        while ! pgrep -x openconnect >/dev/null 2>&1; do
+            [ \$waited -ge $GUARDIAN_CONNECT_TIMEOUT_SECONDS ] && break
+            sleep $GUARDIAN_POLL_SECONDS
+            waited=\$((waited + $GUARDIAN_POLL_SECONDS))
+        done
+        while pgrep -x openconnect >/dev/null 2>&1; do
+            sleep $GUARDIAN_POLL_SECONDS
+        done
+        ip -6 route del unreachable default metric $IPV6_BLACKHOLE_METRIC 2>/dev/null
+    " >/dev/null 2>&1
+}
+
+terminate_stale_sessions() {
+    local stale_pids
+    stale_pids=$(pgrep -x openconnect) || return 0
+
+    echo "Terminating stale openconnect session(s): ${stale_pids//$'\n'/ }"
+    sudo kill $stale_pids 2>/dev/null
+
+    local waited=0
+    while (( waited < STALE_SESSION_GRACE_SECONDS )) && pgrep -x openconnect >/dev/null; do
+        sleep 1
+        (( waited++ ))
+    done
+
+    if pgrep -x openconnect >/dev/null; then
+        echo "Stale session ignored SIGTERM, forcing termination"
+        sudo pkill -KILL -x openconnect 2>/dev/null
+        sleep 1
+    fi
+}
+
+reconcile_leftover_state() {
+    stop_guardian
+    terminate_stale_sessions
+
+    if ipv6_blackhole_enabled && blackhole_is_present; then
+        echo "Removing IPv6 blackhole left by a previous run"
+        sudo ip -6 route del unreachable default metric "$IPV6_BLACKHOLE_METRIC" 2>/dev/null
+    fi
+}
+
+# A long VPN session can outlive the sudo timestamp. Rather than block the exit on
+# a password prompt, hand the cleanup to the guardian, which is already root.
+restore_system_state() {
+    trap - EXIT INT TERM HUP QUIT
+    restore_terminal_background
+
+    ipv6_blackhole_enabled || return 0
+
+    if ! sudo -n true 2>/dev/null; then
+        echo "sudo credentials expired, guardian will withdraw the IPv6 blackhole"
+        return 0
+    fi
+
+    sudo -n ip -6 route del unreachable default metric "$IPV6_BLACKHOLE_METRIC" 2>/dev/null
+    stop_guardian
+    echo "IPv6 default route restored"
+}
+
+main() {
+    load_configuration || return $?
+
+    if ! sudo -v; then
+        echo "Could not obtain sudo privileges, aborting" >&2
+        return $EXIT_NO_PRIVILEGES
+    fi
+
+    apply_terminal_background
+    reconcile_leftover_state
+
+    trap restore_system_state EXIT INT TERM HUP QUIT
+    enable_ipv6_blackhole
+    start_guardian
+    ipv6_blackhole_enabled && echo "IPv6 blackholed for the duration of the VPN session"
+
+    sudo openconnect \
+        -u "$VPN_USER" \
+        --useragent=AnyConnect \
+        -g "$VPN_AUTHGROUP" \
+        --no-external-auth \
+        "$VPN_GATEWAY"
+    local openconnect_status=$?
+
+    restore_system_state
+    return $openconnect_status
+}
+
+main
+session_status=$?
+echo "openconnect exited with status $session_status"
+if [[ -t 0 ]]; then
+    read -r -p "Press Enter to close this window"
+fi
+exit $session_status
