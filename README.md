@@ -62,21 +62,42 @@ gateway carries IPv6 properly.
 
 ## Terminal colour
 
-The window is coloured with an OSC 11 escape sequence and restored with OSC 111
-on exit. This works in any VTE-based terminal and cannot leave a recoloured
-profile behind if the session dies.
+Ptyxis paints its own palette over VTE, so it **ignores** the OSC 11 escape
+sequence that recolours other VTE terminals. The only way to colour a Ptyxis
+window is a profile bound to a palette, selected with `--tab-with-profile`,
+which opens a window of its own when no Ptyxis window is running.
 
-A Ptyxis palette is installed as well, but note that Ptyxis applies a profile
-only to a tab (`--tab-with-profile`), never to a new window, so the palette is
-useful only if you prefer running the session in a tab.
+The installer therefore provisions a profile labelled `VPN` using the
+`vpn-deep-blue` palette, reusing an existing one if it finds it, and points the
+launcher at it. The session script still emits OSC 11 as well, which is what
+colours the window in other VTE terminals.
+
+## Background mode
+
+With `RUN_IN_BACKGROUND='yes'` (the default) openconnect daemonises once
+authentication succeeds. The terminal window can then be closed while the tunnel
+stays up, and the tray indicator becomes the session's only face.
+
+This works because the blackhole is owned by the guardian, not the terminal. On
+exit the session script checks whether an openconnect process is still alive and
+leaves the route in place if so, which also closes a race in foreground mode
+where Ctrl-C could otherwise withdraw the route before the tunnel had gone.
+
+Set it to `no` to keep the tunnel tied to the terminal window instead.
 
 ## Tray indicator
 
 Polls tunnel state and shows connected, connecting, or disconnected, along with
-whether IPv6 is currently blackholed. Connect launches the installed desktop
-entry, so the launcher command lives in exactly one place. Disconnect goes
-through `pkexec`; the guardian then withdraws the blackhole, so a tray-initiated
-disconnect still ends with the network restored.
+whether IPv6 is currently blackholed.
+
+- **Connect** launches the installed desktop entry, so the launcher command
+  lives in exactly one place.
+- **Open Terminal** opens a VPN-coloured terminal in every state. In background
+  mode there is no session window to return to, so the tray is the only route
+  back to one.
+- **Disconnect** goes through `pkexec`; the guardian then withdraws the
+  blackhole, so a tray-initiated disconnect still ends with the network
+  restored.
 
 Requires the `AppIndicator3` typelib and, on GNOME, an AppIndicator extension.
 
