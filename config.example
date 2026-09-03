@@ -5,10 +5,6 @@ VPN_USER='user@example.ethz.ch'
 VPN_GATEWAY='sslvpn.ethz.ch/gess'
 VPN_AUTHGROUP='gess'
 
-# Background colour applied to the terminal for the duration of the session,
-# as an OSC 11 colour spec. Set to an empty string to leave the terminal alone.
-TERMINAL_BACKGROUND_COLOR='#0b1e3d'
-
 # Daemonise openconnect once authentication succeeds, so the terminal window can
 # be closed while the tunnel stays up and the tray indicator represents it.
 # Set to 'no' to keep the session tied to the terminal window instead.

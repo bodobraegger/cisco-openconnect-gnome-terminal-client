@@ -1,63 +1,135 @@
 #!/usr/bin/env python3
 """Shows VPN tunnel state in the GNOME top bar for as long as the tunnel exists.
 
-The session starts the indicator on connect and it stays for the life of the
-session. A dropped tunnel leaves it in place offering Reconnect. Quit stops the
-tunnel, closes the session window with it, and exits.
+A dropped tunnel leaves the indicator in place offering Reconnect. Quit stops
+the tunnel, closes the session window with it, and exits.
 """
 
 from __future__ import annotations
 
 import os
-import pathlib
 import signal
 import subprocess
 import sys
+from dataclasses import dataclass
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "lib"))
-
-import gi  # noqa: E402
+import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("AppIndicator3", "0.1")
 
-from gi.repository import AppIndicator3, GLib, Gio, Gtk  # noqa: E402
-
-from openconnect_gnome.presentation import (  # noqa: E402
-    DISCONNECT_LABEL,
-    FALLBACK_ICON,
-    QUIT_LABEL,
-    RECONNECT_LABEL,
-    action_labels,
-    choose_icon,
-    status_labels,
-)
-from openconnect_gnome.status import read_tunnel_status  # noqa: E402
+from gi.repository import AppIndicator3, GLib, Gio, Gtk
 
 INDICATOR_ID = "openconnect-gnome-tray"
 POLL_INTERVAL_SECONDS = 3
 LAUNCHER_DESKTOP_ID = "openconnect-gnome.desktop"
 SESSION_COMMAND_NAME = "openconnect-session"
-STOP_TUNNEL_COMMAND = ("pkexec", "pkill", "-x", "openconnect")
 NOTIFY_COMMAND = ("notify-send", "--app-name=VPN")
 
-# After acting on the tunnel the state changes within a second or two, so the
-# menu is refreshed faster than the idle poll for a short window rather than
-# leaving a stale "Connected" sitting there.
-SETTLE_INTERVAL_SECONDS = 1
-SETTLE_REFRESHES = 8
+TUNNEL_INTERFACE_PREFIX = "tun"
+OPENCONNECT_PROCESS_NAME = "openconnect"
+IPV6_BLACKHOLE_METRIC = 1
+ADDRESS_QUERY = ("ip", "-o", "-4", "addr", "show")
+PROCESS_QUERY = ("pgrep", "-x", OPENCONNECT_PROCESS_NAME)
+IPV6_DEFAULT_ROUTE_QUERY = ("ip", "-6", "route", "show", "default")
 
-# How long Quit waits for the tunnel to drop before giving up, most likely
-# because the pkexec prompt was dismissed.
+# One pkexec call for one auth prompt: killing openconnect without also
+# deleting the blackhole route (no guardian left to do it) would strand IPv6.
+STOP_TUNNEL_COMMAND = (
+    "pkexec", "sh", "-c",
+    f"pkill -x {OPENCONNECT_PROCESS_NAME}; "
+    f"ip -6 route del unreachable default metric {IPV6_BLACKHOLE_METRIC} 2>/dev/null; exit 0",
+)
+
+CONNECTED_ICONS = ("network-vpn-symbolic", "network-vpn", "network-transmit-receive")
+CONNECTING_ICONS = ("network-vpn-acquiring-symbolic", "network-vpn", "network-idle")
+DISCONNECTED_ICONS = ("network-vpn-disconnected-symbolic", "network-offline-symbolic", "network-offline")
+FALLBACK_ICON = "network-workgroup"
+RECONNECT_LABEL = "Reconnect..."
+DISCONNECT_LABEL = "Disconnect"
+QUIT_LABEL = "Quit"
+IPV6_BYPASS_WARNING = "Warning: IPv6 is open, traffic may bypass the tunnel"
+IPV6_ORPHAN_WARNING = "Warning: IPv6 still blackholed with no tunnel"
+
+# How long Quit waits for the tunnel to actually drop (e.g. a dismissed
+# pkexec prompt) before giving up and leaving the indicator open instead.
 QUIT_WAIT_SECONDS = 15
+REFRESH_AFTER_ACTION_DELAYS_SECONDS = (1, 3)
+
+
+@dataclass(frozen=True)
+class TunnelStatus:
+    interface: str | None
+    address: str | None
+    process_running: bool
+    ipv6_blackholed: bool
+
+    @property
+    def connected(self) -> bool:
+        return self.process_running and self.address is not None
+
+    def summary(self) -> str:
+        if self.connected:
+            return f"Connected on {self.interface} ({self.address})"
+        if self.process_running:
+            return "Connecting, no tunnel address yet"
+        return "Disconnected"
+
+
+def parse_tunnel_address(ip_output: str) -> tuple[str | None, str | None]:
+    """First tunnel interface and IPv4 address from `ip -o -4 addr show`."""
+    for line in ip_output.splitlines():
+        fields = line.split()
+        if len(fields) < 4 or fields[2] != "inet":
+            continue
+        interface = fields[1]
+        if interface.startswith(TUNNEL_INTERFACE_PREFIX):
+            return interface, fields[3].split("/")[0]
+    return None, None
+
+
+def parse_ipv6_blackhole(route_output: str, metric: int = IPV6_BLACKHOLE_METRIC) -> bool:
+    """Detect the blackhole route the session script installs while connected."""
+    return any(
+        line.startswith("unreachable") and f"metric {metric}" in line
+        for line in route_output.splitlines()
+    )
+
+
+def _run(command: tuple[str, ...]) -> str:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout
+
+
+def read_tunnel_status(run_command=_run) -> TunnelStatus:
+    interface, address = parse_tunnel_address(run_command(ADDRESS_QUERY))
+    return TunnelStatus(
+        interface=interface,
+        address=address,
+        process_running=bool(run_command(PROCESS_QUERY).strip()),
+        ipv6_blackholed=parse_ipv6_blackhole(run_command(IPV6_DEFAULT_ROUTE_QUERY)),
+    )
+
+
+def choose_icon(status: TunnelStatus, icon_exists) -> str:
+    """First icon the active theme has: AppIndicator shows nothing for a name
+    the theme lacks, so candidates are probed rather than assumed."""
+    if status.connected:
+        candidates = CONNECTED_ICONS
+    elif status.process_running:
+        candidates = CONNECTING_ICONS
+    else:
+        candidates = DISCONNECTED_ICONS
+    return next((name for name in candidates if icon_exists(name)), FALLBACK_ICON)
 
 
 class VpnTrayIndicator:
     def __init__(self) -> None:
         self.indicator = AppIndicator3.Indicator.new(
-            INDICATOR_ID,
-            FALLBACK_ICON,
-            AppIndicator3.IndicatorCategory.SYSTEM_SERVICES,
+            INDICATOR_ID, FALLBACK_ICON, AppIndicator3.IndicatorCategory.SYSTEM_SERVICES
         )
         self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         self.menu = Gtk.Menu()
@@ -67,52 +139,49 @@ class VpnTrayIndicator:
             RECONNECT_LABEL: self.on_reconnect,
             QUIT_LABEL: self.on_quit,
         }
-        self.settle_ticks_remaining = 0
         self.quit_ticks_remaining = 0
         self.refresh()
         GLib.timeout_add_seconds(POLL_INTERVAL_SECONDS, self.on_tick)
-
-    @staticmethod
-    def icon_exists(name: str) -> bool:
-        return Gtk.IconTheme.get_default().has_icon(name)
 
     def on_tick(self) -> bool:
         self.refresh()
         return GLib.SOURCE_CONTINUE
 
-    def on_settle_tick(self) -> bool:
+    def refresh_after_action(self) -> None:
+        for delay in REFRESH_AFTER_ACTION_DELAYS_SECONDS:
+            GLib.timeout_add_seconds(delay, self._refresh_once)
+
+    def _refresh_once(self) -> bool:
         self.refresh()
-        self.settle_ticks_remaining -= 1
-        if self.settle_ticks_remaining > 0:
-            return GLib.SOURCE_CONTINUE
         return GLib.SOURCE_REMOVE
 
-    def start_settling(self) -> None:
-        already_settling = self.settle_ticks_remaining > 0
-        self.settle_ticks_remaining = SETTLE_REFRESHES
-        if not already_settling:
-            GLib.timeout_add_seconds(SETTLE_INTERVAL_SECONDS, self.on_settle_tick)
-
-    def refresh(self):
+    def refresh(self) -> TunnelStatus:
         status = read_tunnel_status()
         summary = status.summary()
-        self.indicator.set_icon_full(choose_icon(status, self.icon_exists), summary)
+        icon_exists = Gtk.IconTheme.get_default().has_icon
+        self.indicator.set_icon_full(choose_icon(status, icon_exists), summary)
         self.indicator.set_title(summary)
         self.rebuild_menu(status)
         return status
 
-    def rebuild_menu(self, status) -> None:
+    def rebuild_menu(self, status: TunnelStatus) -> None:
         for child in self.menu.get_children():
             self.menu.remove(child)
 
-        for label in status_labels(status):
+        labels = [status.summary()]
+        if status.connected and not status.ipv6_blackholed:
+            labels.append(IPV6_BYPASS_WARNING)
+        elif not status.process_running and status.ipv6_blackholed:
+            labels.append(IPV6_ORPHAN_WARNING)
+        for label in labels:
             item = Gtk.MenuItem(label=label)
             item.set_sensitive(False)
             self.menu.append(item)
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        for label in action_labels(status):
+        toggle = DISCONNECT_LABEL if status.process_running else RECONNECT_LABEL
+        for label in (toggle, QUIT_LABEL):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", self.handlers[label])
             self.menu.append(item)
@@ -127,9 +196,6 @@ class VpnTrayIndicator:
             print(f"{summary}: {body}", file=sys.stderr)
 
     def stop_tunnel(self) -> bool:
-        """Ask for the tunnel to stop. The guardian withdraws the IPv6 blackhole
-        once the openconnect process is gone, so this still ends with the network
-        restored."""
         try:
             subprocess.Popen(STOP_TUNNEL_COMMAND)
         except OSError as error:
@@ -139,10 +205,8 @@ class VpnTrayIndicator:
 
     @staticmethod
     def close_session_windows() -> None:
-        """Ending the session script closes the terminal it runs in, because the
-        terminal was launched to run exactly that command. Addressed by pid from
-        a path match rather than `pkill -f`, which would also match any shell
-        whose command line merely mentions the session."""
+        """Kill by pid from a path match, not `pkill -f`, so a shell that
+        merely mentions the session name isn't caught too."""
         try:
             found = subprocess.run(
                 ("pgrep", "-f", SESSION_COMMAND_NAME),
@@ -150,12 +214,8 @@ class VpnTrayIndicator:
             ).stdout
         except (OSError, subprocess.TimeoutExpired):
             return
-
         own_pid = os.getpid()
-        for line in found.split():
-            pid = int(line)
-            if pid == own_pid:
-                continue
+        for pid in (p for line in found.split() if (p := int(line)) != own_pid):
             try:
                 os.kill(pid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
@@ -163,16 +223,15 @@ class VpnTrayIndicator:
 
     def on_disconnect(self, _item) -> None:
         if self.stop_tunnel():
-            self.start_settling()
+            self.refresh_after_action()
 
     def on_reconnect(self, _item) -> None:
-        # Reconnecting needs the password and 2FA, so it goes through the same
-        # terminal launcher as the first connection rather than guessing.
+        # Needs the password and 2FA, so it reuses the terminal launcher
+        # from the first connection rather than guessing credentials.
         launcher = Gio.DesktopAppInfo.new(LAUNCHER_DESKTOP_ID)
         if launcher is None:
             self.notify(
-                "Cannot reconnect",
-                f"{LAUNCHER_DESKTOP_ID} is not installed. Run install.sh.",
+                "Cannot reconnect", f"{LAUNCHER_DESKTOP_ID} is not installed. Run install.sh."
             )
             return
         try:
@@ -180,30 +239,25 @@ class VpnTrayIndicator:
         except GLib.Error as error:
             self.notify("Cannot reconnect", error.message)
             return
-        self.start_settling()
+        self.refresh_after_action()
 
     def on_quit(self, _item) -> None:
-        if not read_tunnel_status().process_running:
-            self.close_session_windows()
-            Gtk.main_quit()
-            return
-        if not self.stop_tunnel():
+        if read_tunnel_status().process_running and not self.stop_tunnel():
             return
         self.quit_ticks_remaining = QUIT_WAIT_SECONDS
-        GLib.timeout_add_seconds(1, self.on_quit_tick)
+        if self.on_quit_tick():
+            GLib.timeout_add_seconds(1, self.on_quit_tick)
 
     def on_quit_tick(self) -> bool:
-        # Exiting before the tunnel is really gone would hide a live VPN, so a
-        # dismissed authentication prompt keeps the indicator open instead.
+        # Exiting before the tunnel is really gone would hide a live VPN, so
+        # a dismissed auth prompt keeps the indicator open instead.
         if not self.refresh().process_running:
             self.close_session_windows()
             Gtk.main_quit()
             return GLib.SOURCE_REMOVE
-
         self.quit_ticks_remaining -= 1
         if self.quit_ticks_remaining > 0:
             return GLib.SOURCE_CONTINUE
-
         self.notify("VPN still running", "Indicator kept open so it stays visible.")
         return GLib.SOURCE_REMOVE
 
