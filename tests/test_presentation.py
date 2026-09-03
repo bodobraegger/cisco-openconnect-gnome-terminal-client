@@ -12,6 +12,7 @@ from openconnect_gnome.presentation import (  # noqa: E402
     FALLBACK_ICON,
     IPV6_BLACKHOLED_LABEL,
     IPV6_OPEN_LABEL,
+    OPEN_TERMINAL_LABEL,
     QUIT_LABEL,
     choose_icon,
     action_labels,
@@ -63,13 +64,18 @@ class StatusLabelTests(unittest.TestCase):
 
 class ActionLabelTests(unittest.TestCase):
     def test_offers_disconnect_while_running(self):
-        self.assertEqual(action_labels(CONNECTED), [DISCONNECT_LABEL, QUIT_LABEL])
+        self.assertEqual(action_labels(CONNECTED)[0], DISCONNECT_LABEL)
 
     def test_offers_disconnect_while_still_connecting(self):
-        self.assertEqual(action_labels(CONNECTING), [DISCONNECT_LABEL, QUIT_LABEL])
+        self.assertEqual(action_labels(CONNECTING)[0], DISCONNECT_LABEL)
 
     def test_offers_connect_when_nothing_running(self):
-        self.assertEqual(action_labels(DISCONNECTED), [CONNECT_LABEL, QUIT_LABEL])
+        self.assertEqual(action_labels(DISCONNECTED)[0], CONNECT_LABEL)
+
+    def test_terminal_can_be_opened_in_every_state(self):
+        for state in (CONNECTED, CONNECTING, DISCONNECTED):
+            with self.subTest(state=state):
+                self.assertIn(OPEN_TERMINAL_LABEL, action_labels(state))
 
     def test_quit_is_always_available(self):
         for state in (CONNECTED, CONNECTING, DISCONNECTED):

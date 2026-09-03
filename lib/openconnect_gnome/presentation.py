@@ -18,6 +18,7 @@ FALLBACK_ICON = "network-workgroup"
 
 CONNECT_LABEL = "Connect..."
 DISCONNECT_LABEL = "Disconnect"
+OPEN_TERMINAL_LABEL = "Open Terminal"
 QUIT_LABEL = "Quit"
 
 IPV6_BLACKHOLED_LABEL = "IPv6 blackholed (traffic forced through tunnel)"
@@ -55,7 +56,10 @@ def status_labels(status: TunnelStatus) -> list[str]:
 
 
 def action_labels(status: TunnelStatus) -> list[str]:
-    """The clickable actions, which depend on whether anything is running."""
-    if status.process_running:
-        return [DISCONNECT_LABEL, QUIT_LABEL]
-    return [CONNECT_LABEL, QUIT_LABEL]
+    """The clickable actions. Only the first depends on whether a tunnel is up.
+
+    Opening a terminal stays available in every state: in background mode there
+    is no session window to go back to, so the tray is the only way to get one.
+    """
+    first = DISCONNECT_LABEL if status.process_running else CONNECT_LABEL
+    return [first, OPEN_TERMINAL_LABEL, QUIT_LABEL]

@@ -20,6 +20,7 @@ from openconnect_gnome.presentation import (  # noqa: E402
     CONNECT_LABEL,
     DISCONNECT_LABEL,
     FALLBACK_ICON,
+    OPEN_TERMINAL_LABEL,
     QUIT_LABEL,
     action_labels,
     choose_icon,
@@ -30,6 +31,7 @@ from openconnect_gnome.status import read_tunnel_status  # noqa: E402
 INDICATOR_ID = "openconnect-gnome-tray"
 POLL_INTERVAL_SECONDS = 3
 LAUNCHER_DESKTOP_ID = "openconnect-gnome.desktop"
+TERMINAL_DESKTOP_ID = "openconnect-gnome-terminal.desktop"
 DISCONNECT_COMMAND = ("pkexec", "pkill", "-x", "openconnect")
 NOTIFY_COMMAND = ("notify-send", "--app-name=VPN")
 
@@ -51,6 +53,7 @@ class VpnTrayIndicator:
         self.handlers = {
             CONNECT_LABEL: self.on_connect,
             DISCONNECT_LABEL: self.on_disconnect,
+            OPEN_TERMINAL_LABEL: self.on_open_terminal,
             QUIT_LABEL: self.on_quit,
         }
         self.refresh()
@@ -96,20 +99,25 @@ class VpnTrayIndicator:
         except OSError:
             print(f"{summary}: {body}", file=sys.stderr)
 
-    def on_connect(self, _item) -> None:
+    def launch_desktop_entry(self, desktop_id: str, failure_summary: str) -> None:
         # Launching the .desktop entry rather than a hard-coded terminal command
-        # keeps the launcher definition in exactly one place.
-        launcher = Gio.DesktopAppInfo.new(LAUNCHER_DESKTOP_ID)
-        if launcher is None:
+        # keeps each command definition in exactly one place.
+        entry = Gio.DesktopAppInfo.new(desktop_id)
+        if entry is None:
             self.notify(
-                "Cannot start VPN",
-                f"{LAUNCHER_DESKTOP_ID} is not installed. Run install.sh.",
+                failure_summary, f"{desktop_id} is not installed. Run install.sh."
             )
             return
         try:
-            launcher.launch(None, None)
+            entry.launch(None, None)
         except GLib.Error as error:
-            self.notify("Cannot start VPN", error.message)
+            self.notify(failure_summary, error.message)
+
+    def on_connect(self, _item) -> None:
+        self.launch_desktop_entry(LAUNCHER_DESKTOP_ID, "Cannot start VPN")
+
+    def on_open_terminal(self, _item) -> None:
+        self.launch_desktop_entry(TERMINAL_DESKTOP_ID, "Cannot open terminal")
 
     def on_disconnect(self, _item) -> None:
         try:
