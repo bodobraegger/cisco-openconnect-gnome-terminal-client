@@ -33,6 +33,11 @@ sudo() {
     return 0
 }
 pgrep() {
+    # Only the openconnect lookup is stubbed; path lookups (tray, session) must
+    # report nothing so the code under test takes the "not running" branch.
+    case "$*" in
+        *vpn-tray-indicator*|*openconnect-session*) return 1 ;;
+    esac
     [ -f "$STUB_STATE/running" ] && { echo 5555; return 0; }
     [ "${STUB_STALE:-no}" = yes ] && { echo 4242; return 0; }
     return 1
@@ -44,7 +49,8 @@ ip() {
     fi
     return 0
 }
-export -f sudo pgrep ip
+setsid() { echo "STUB setsid $*"; }
+export -f sudo pgrep ip setsid
 STUBS
 
 write_config() {
@@ -92,6 +98,7 @@ echo "clean start:"
 CLEAN=$(run_session good no no)
 assert_ordered "blackhole installed before openconnect" "$CLEAN" "route replace" "openconnect-ran"
 assert_ordered "blackhole withdrawn after openconnect" "$CLEAN" "openconnect-ran" "route del"
+assert_not_contains "no tray started when the tunnel did not survive" "$CLEAN" "Tray indicator started"
 
 echo "recovery from a previous hard kill:"
 DIRTY=$(run_session good yes yes)
@@ -110,6 +117,7 @@ assert_contains "openconnect daemonises" "$BACKGROUND" "--background"
 assert_contains "blackhole handed to the guardian" "$BACKGROUND" "guardian keeps the IPv6 blackhole"
 assert_not_contains "blackhole not withdrawn while tunnel is up" "$BACKGROUND" "route del"
 assert_contains "tells the user the window is closable" "$BACKGROUND" "window can be closed"
+assert_contains "starts the tray indicator" "$BACKGROUND" "Tray indicator started"
 
 echo "configuration errors:"
 XDG_CONFIG_HOME="$WORKSPACE/missing" bash -c "source '$WORKSPACE/stubs.sh'; source '$SESSION_SCRIPT'" >/dev/null 2>&1

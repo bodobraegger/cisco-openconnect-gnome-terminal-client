@@ -1,8 +1,8 @@
 """Turns a TunnelStatus into the labels and icon the tray shows.
 
 Separate from the GTK code so the display logic is testable without a display.
-The tray is the only control surface: a connect/disconnect toggle and a Quit
-that closes the tunnel and the indicator together.
+The tray starts with the VPN and stays for the life of the session, including
+after an unexpected drop, so that a reconnect is one click away.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ DISCONNECTED_ICONS = (
 )
 FALLBACK_ICON = "network-workgroup"
 
-CONNECT_LABEL = "Connect..."
+RECONNECT_LABEL = "Reconnect..."
 DISCONNECT_LABEL = "Disconnect"
 QUIT_LABEL = "Quit"
 
@@ -57,6 +57,10 @@ def status_labels(status: TunnelStatus) -> list[str]:
 
 
 def action_labels(status: TunnelStatus) -> list[str]:
-    """A connect/disconnect toggle, plus Quit, which stops the tunnel and exits."""
-    toggle = DISCONNECT_LABEL if status.process_running else CONNECT_LABEL
+    """A toggle for the tunnel, plus Quit.
+
+    A dropped tunnel leaves the indicator in place showing Reconnect, because a
+    VPN that dies mid-session is exactly when a one-click way back matters.
+    """
+    toggle = DISCONNECT_LABEL if status.process_running else RECONNECT_LABEL
     return [toggle, QUIT_LABEL]

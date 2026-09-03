@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Shows VPN tunnel state in the GNOME top bar and is the only control surface.
+"""Shows VPN tunnel state in the GNOME top bar for as long as the tunnel exists.
 
-Quit closes the tunnel and the indicator together. It waits for the tunnel to
-actually drop before exiting, because a cancelled authentication would otherwise
-leave a tunnel running with no window and no tray icon to show it.
+The session starts the indicator on connect and it stays for the life of the
+session. A dropped tunnel leaves it in place offering Reconnect. Quit stops the
+tunnel, closes the session window with it, and exits.
 """
 
 from __future__ import annotations
 
+import os
 import pathlib
+import signal
 import subprocess
 import sys
 
@@ -22,10 +24,10 @@ gi.require_version("AppIndicator3", "0.1")
 from gi.repository import AppIndicator3, GLib, Gio, Gtk  # noqa: E402
 
 from openconnect_gnome.presentation import (  # noqa: E402
-    CONNECT_LABEL,
     DISCONNECT_LABEL,
     FALLBACK_ICON,
     QUIT_LABEL,
+    RECONNECT_LABEL,
     action_labels,
     choose_icon,
     status_labels,
@@ -35,6 +37,7 @@ from openconnect_gnome.status import read_tunnel_status  # noqa: E402
 INDICATOR_ID = "openconnect-gnome-tray"
 POLL_INTERVAL_SECONDS = 3
 LAUNCHER_DESKTOP_ID = "openconnect-gnome.desktop"
+SESSION_COMMAND_NAME = "openconnect-session"
 STOP_TUNNEL_COMMAND = ("pkexec", "pkill", "-x", "openconnect")
 NOTIFY_COMMAND = ("notify-send", "--app-name=VPN")
 
@@ -44,8 +47,8 @@ NOTIFY_COMMAND = ("notify-send", "--app-name=VPN")
 SETTLE_INTERVAL_SECONDS = 1
 SETTLE_REFRESHES = 8
 
-# How long Quit waits for the tunnel to drop before deciding the stop did not
-# happen, most likely because the pkexec prompt was dismissed.
+# How long Quit waits for the tunnel to drop before giving up, most likely
+# because the pkexec prompt was dismissed.
 QUIT_WAIT_SECONDS = 15
 
 
@@ -60,8 +63,8 @@ class VpnTrayIndicator:
         self.menu = Gtk.Menu()
         self.indicator.set_menu(self.menu)
         self.handlers = {
-            CONNECT_LABEL: self.on_connect,
             DISCONNECT_LABEL: self.on_disconnect,
+            RECONNECT_LABEL: self.on_reconnect,
             QUIT_LABEL: self.on_quit,
         }
         self.settle_ticks_remaining = 0
@@ -123,23 +126,6 @@ class VpnTrayIndicator:
         except OSError:
             print(f"{summary}: {body}", file=sys.stderr)
 
-    def on_connect(self, _item) -> None:
-        # Launching the .desktop entry rather than a hard-coded terminal command
-        # keeps the launcher definition in exactly one place.
-        launcher = Gio.DesktopAppInfo.new(LAUNCHER_DESKTOP_ID)
-        if launcher is None:
-            self.notify(
-                "Cannot start VPN",
-                f"{LAUNCHER_DESKTOP_ID} is not installed. Run install.sh.",
-            )
-            return
-        try:
-            launcher.launch(None, None)
-        except GLib.Error as error:
-            self.notify("Cannot start VPN", error.message)
-            return
-        self.start_settling()
-
     def stop_tunnel(self) -> bool:
         """Ask for the tunnel to stop. The guardian withdraws the IPv6 blackhole
         once the openconnect process is gone, so this still ends with the network
@@ -151,12 +137,54 @@ class VpnTrayIndicator:
             return False
         return True
 
+    @staticmethod
+    def close_session_windows() -> None:
+        """Ending the session script closes the terminal it runs in, because the
+        terminal was launched to run exactly that command. Addressed by pid from
+        a path match rather than `pkill -f`, which would also match any shell
+        whose command line merely mentions the session."""
+        try:
+            found = subprocess.run(
+                ("pgrep", "-f", SESSION_COMMAND_NAME),
+                capture_output=True, text=True, check=False, timeout=5,
+            ).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return
+
+        own_pid = os.getpid()
+        for line in found.split():
+            pid = int(line)
+            if pid == own_pid:
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+
     def on_disconnect(self, _item) -> None:
         if self.stop_tunnel():
             self.start_settling()
 
+    def on_reconnect(self, _item) -> None:
+        # Reconnecting needs the password and 2FA, so it goes through the same
+        # terminal launcher as the first connection rather than guessing.
+        launcher = Gio.DesktopAppInfo.new(LAUNCHER_DESKTOP_ID)
+        if launcher is None:
+            self.notify(
+                "Cannot reconnect",
+                f"{LAUNCHER_DESKTOP_ID} is not installed. Run install.sh.",
+            )
+            return
+        try:
+            launcher.launch(None, None)
+        except GLib.Error as error:
+            self.notify("Cannot reconnect", error.message)
+            return
+        self.start_settling()
+
     def on_quit(self, _item) -> None:
         if not read_tunnel_status().process_running:
+            self.close_session_windows()
             Gtk.main_quit()
             return
         if not self.stop_tunnel():
@@ -168,6 +196,7 @@ class VpnTrayIndicator:
         # Exiting before the tunnel is really gone would hide a live VPN, so a
         # dismissed authentication prompt keeps the indicator open instead.
         if not self.refresh().process_running:
+            self.close_session_windows()
             Gtk.main_quit()
             return GLib.SOURCE_REMOVE
 
@@ -175,10 +204,7 @@ class VpnTrayIndicator:
         if self.quit_ticks_remaining > 0:
             return GLib.SOURCE_CONTINUE
 
-        self.notify(
-            "VPN still running",
-            "Indicator kept open so the tunnel stays visible.",
-        )
+        self.notify("VPN still running", "Indicator kept open so it stays visible.")
         return GLib.SOURCE_REMOVE
 
 

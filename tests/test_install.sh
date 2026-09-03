@@ -63,9 +63,8 @@ assert_contains "launcher declares an application" "$LAUNCHER" "Type=Application
 assert_equals "no stray terminal entry is installed" \
     "$([ -e "$APPLICATIONS_DIR/openconnect-gnome-terminal.desktop" ] && echo yes || echo no)" no
 
-AUTOSTART=$(cat "$AUTOSTART_DIR/openconnect-gnome-tray.desktop")
-assert_not_contains "no unrendered placeholder in autostart" "$AUTOSTART" "@"
-assert_contains "autostart runs the tray" "$AUTOSTART" "$BIN_DIR/vpn-tray-indicator"
+assert_equals "no autostart entry: the tray is started by the session" \
+    "$([ -e "$AUTOSTART_DIR/openconnect-gnome-tray.desktop" ] && echo yes || echo no)" no
 
 assert_equals "starter config created" \
     "$([ -f "$CONFIG_DIR/config" ] && echo yes || echo no)" yes

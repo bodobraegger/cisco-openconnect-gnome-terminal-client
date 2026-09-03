@@ -14,6 +14,7 @@ readonly GUARDIAN_PIDFILE='/run/openconnect-gnome-ipv6-guardian.pid'
 readonly GUARDIAN_POLL_SECONDS=2
 readonly GUARDIAN_CONNECT_TIMEOUT_SECONDS=180
 readonly OPENCONNECT_PIDFILE='/run/openconnect-gnome.pid'
+readonly TRAY_COMMAND_NAME='vpn-tray-indicator'
 
 readonly EXIT_CONFIG_MISSING=2
 readonly EXIT_CONFIG_INCOMPLETE=3
@@ -42,6 +43,19 @@ load_configuration() {
     : "${TERMINAL_BACKGROUND_COLOR:=}"
     : "${BLACKHOLE_IPV6:=yes}"
     : "${RUN_IN_BACKGROUND:=yes}"
+}
+
+# The indicator is tied to the tunnel rather than started at login, so nothing
+# shows a VPN icon while no VPN is running.
+start_tray_indicator() {
+    local tray_path
+    tray_path="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/$TRAY_COMMAND_NAME"
+
+    [[ -x $tray_path ]] || return 0
+    pgrep -f "$tray_path" >/dev/null 2>&1 && return 0
+
+    setsid --fork "$tray_path" >/dev/null 2>&1
+    echo "Tray indicator started"
 }
 
 run_in_background() {
@@ -205,6 +219,10 @@ main() {
         "${background_options[@]}" \
         "$VPN_GATEWAY"
     local openconnect_status=$?
+
+    if (( openconnect_status == 0 )) && session_still_running; then
+        start_tray_indicator
+    fi
 
     restore_system_state
     return $openconnect_status

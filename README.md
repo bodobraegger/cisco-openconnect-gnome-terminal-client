@@ -48,8 +48,12 @@ prompt.
     $EDITOR ~/.config/openconnect-gnome/config
 
 Everything lands under `$HOME`: symlinks in `~/.local/bin`, a launcher in
-`~/.local/share/applications`, a tray autostart entry in `~/.config/autostart`,
-and the palette in `~/.local/share/org.gnome.Ptyxis/palettes`.
+`~/.local/share/applications`, and the palette in
+`~/.local/share/org.gnome.Ptyxis/palettes`.
+
+There is no autostart entry. The tray belongs to a VPN session, so the session
+starts it on connect rather than something starting it at login when no tunnel
+exists.
 
 `./install.sh uninstall` removes all of it and leaves your config alone.
 
@@ -87,27 +91,30 @@ Set it to `no` to keep the tunnel tied to the terminal window instead.
 
 ## Tray indicator
 
-The tray is the only control surface. The top line is the connection status,
-followed by a connect/disconnect toggle and a Quit that closes both the tunnel
-and the indicator.
+The session starts the tray on connect, and it stays for the life of the
+session. The top line is the connection status, followed by a toggle and Quit.
 
 | State | Top line | Toggle | Quit |
 | --- | --- | --- | --- |
 | Connected | `Connected on tun0 (10.249.65.41)` | **Disconnect** | **Quit** |
 | Connecting | `Connecting, no tunnel address yet` | **Disconnect** | **Quit** |
-| Disconnected | `Disconnected` | **Connect...** | **Quit** |
+| Dropped | `Disconnected` | **Reconnect...** | **Quit** |
 
-Stopping the tunnel goes through `pkexec`; the guardian then withdraws the
-blackhole, so stopping from the tray still ends with the network restored.
+A dropped tunnel leaves the indicator in place offering **Reconnect**, because a
+VPN dying mid-session is exactly when a one-click way back matters. Reconnect
+goes through the same terminal launcher as the first connection: re-authenticating
+needs the password and 2FA, and no credentials are stored to avoid that.
 
-Quit waits for the tunnel to actually drop before exiting. Dismissing the
-`pkexec` prompt leaves the tunnel up, and exiting then would hide a live VPN
-behind no window and no icon, so the indicator stays open and says so.
+**Quit** stops the tunnel, closes the session window with it, and exits. It waits
+for the tunnel to actually drop first; dismissing the `pkexec` prompt leaves the
+tunnel up, and exiting then would hide a live VPN, so the indicator stays and says
+so. Stopping the tunnel lets the guardian withdraw the blackhole, so quitting
+still ends with the network restored.
 
-A second status line appears only when something needs attention: IPv6 open
-while connected, or a blackhole still installed after the tunnel has gone. After
-any action the menu refreshes once a second for a few seconds, so it never sits
-on a stale `Connected`.
+A second status line appears only when something needs attention: IPv6 open while
+connected, or a blackhole still installed after the tunnel has gone. After any
+action the menu refreshes once a second for a few seconds, so it never sits on a
+stale `Connected`.
 
 Requires the `AppIndicator3` typelib and, on GNOME, an AppIndicator extension.
 

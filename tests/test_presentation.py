@@ -7,12 +7,12 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "lib"))
 
 from openconnect_gnome.presentation import (  # noqa: E402
-    CONNECT_LABEL,
+    DISCONNECT_LABEL,
     FALLBACK_ICON,
     IPV6_BYPASS_WARNING,
-    DISCONNECT_LABEL,
     IPV6_ORPHAN_WARNING,
     QUIT_LABEL,
+    RECONNECT_LABEL,
     action_labels,
     choose_icon,
     status_labels,
@@ -64,14 +64,14 @@ class StatusLabelTests(unittest.TestCase):
 
 
 class ActionLabelTests(unittest.TestCase):
-    def test_toggle_offers_disconnect_while_connected(self):
-        self.assertEqual(action_labels(CONNECTED)[0], DISCONNECT_LABEL)
+    def test_offers_disconnect_while_connected(self):
+        self.assertEqual(action_labels(CONNECTED), [DISCONNECT_LABEL, QUIT_LABEL])
 
-    def test_toggle_offers_disconnect_while_still_connecting(self):
+    def test_offers_disconnect_while_still_connecting(self):
         self.assertEqual(action_labels(CONNECTING)[0], DISCONNECT_LABEL)
 
-    def test_toggle_offers_connect_when_nothing_running(self):
-        self.assertEqual(action_labels(DISCONNECTED)[0], CONNECT_LABEL)
+    def test_offers_reconnect_after_the_tunnel_drops(self):
+        self.assertEqual(action_labels(DISCONNECTED), [RECONNECT_LABEL, QUIT_LABEL])
 
     def test_quit_is_offered_in_every_state(self):
         for state in (CONNECTED, CONNECTING, DISCONNECTED, ORPHANED_BLACKHOLE):
