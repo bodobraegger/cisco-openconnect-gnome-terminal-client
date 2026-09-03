@@ -13,6 +13,7 @@ readonly GUARDIAN_TAG='openconnect-gnome-ipv6-guardian'
 readonly GUARDIAN_PIDFILE='/run/openconnect-gnome-ipv6-guardian.pid'
 readonly GUARDIAN_POLL_SECONDS=2
 readonly GUARDIAN_CONNECT_TIMEOUT_SECONDS=180
+readonly OPENCONNECT_PIDFILE='/run/openconnect-gnome.pid'
 
 readonly EXIT_CONFIG_MISSING=2
 readonly EXIT_CONFIG_INCOMPLETE=3
@@ -40,6 +41,15 @@ load_configuration() {
 
     : "${TERMINAL_BACKGROUND_COLOR:=}"
     : "${BLACKHOLE_IPV6:=yes}"
+    : "${RUN_IN_BACKGROUND:=yes}"
+}
+
+run_in_background() {
+    [[ $RUN_IN_BACKGROUND == yes ]]
+}
+
+session_still_running() {
+    pgrep -x openconnect >/dev/null 2>&1
 }
 
 # OSC 11 sets the terminal background and OSC 111 restores the configured default.
@@ -146,6 +156,14 @@ restore_system_state() {
 
     ipv6_blackhole_enabled || return 0
 
+    # In background mode openconnect outlives this script, and on an interrupted
+    # foreground run it may not have exited yet. Either way the blackhole must
+    # stay until the tunnel is actually gone, which is the guardian's job.
+    if session_still_running; then
+        echo "Tunnel still up, guardian keeps the IPv6 blackhole until it drops"
+        return 0
+    fi
+
     if ! sudo -n true 2>/dev/null; then
         echo "sudo credentials expired, guardian will withdraw the IPv6 blackhole"
         return 0
@@ -172,11 +190,19 @@ main() {
     start_guardian
     ipv6_blackhole_enabled && echo "IPv6 blackholed for the duration of the VPN session"
 
+    local -a background_options=()
+    if run_in_background; then
+        # Daemonises once authentication succeeds, so this window can be closed
+        # without dropping the tunnel. The tray then represents the session.
+        background_options=(--background --pid-file "$OPENCONNECT_PIDFILE")
+    fi
+
     sudo openconnect \
         -u "$VPN_USER" \
         --useragent=AnyConnect \
         -g "$VPN_AUTHGROUP" \
         --no-external-auth \
+        "${background_options[@]}" \
         "$VPN_GATEWAY"
     local openconnect_status=$?
 
@@ -186,6 +212,12 @@ main() {
 
 main
 session_status=$?
+
+if (( session_status == 0 )) && session_still_running; then
+    echo "Connected. This window can be closed; the tray keeps the session."
+    exit 0
+fi
+
 echo "openconnect exited with status $session_status"
 if [[ -t 0 ]]; then
     read -r -p "Press Enter to close this window"

@@ -9,6 +9,11 @@ VPN_AUTHGROUP='gess'
 # as an OSC 11 colour spec. Set to an empty string to leave the terminal alone.
 TERMINAL_BACKGROUND_COLOR='#0b1e3d'
 
+# Daemonise openconnect once authentication succeeds, so the terminal window can
+# be closed while the tunnel stays up and the tray indicator represents it.
+# Set to 'no' to keep the session tied to the terminal window instead.
+RUN_IN_BACKGROUND='yes'
+
 # Blackhole the IPv6 default route while connected. Required whenever the VPN
 # gateway is IPv4-only but services behind it resolve to dual-stack identity
 # providers, otherwise part of a login flow escapes the tunnel.
