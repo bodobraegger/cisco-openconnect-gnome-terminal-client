@@ -4,55 +4,33 @@
 set -euo pipefail
 
 readonly SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-readonly BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-readonly APPLICATIONS_DIR="${APPLICATIONS_DIR:-$HOME/.local/share/applications}"
-readonly AUTOSTART_DIR="${AUTOSTART_DIR:-$HOME/.config/autostart}"
-readonly PALETTE_DIR="${PALETTE_DIR:-$HOME/.local/share/org.gnome.Ptyxis/palettes}"
+readonly BIN_DIR="${BIN_DIR:-$HOME/.local/bin}" APPLICATIONS_DIR="${APPLICATIONS_DIR:-$HOME/.local/share/applications}"
+readonly AUTOSTART_DIR="${AUTOSTART_DIR:-$HOME/.config/autostart}" PALETTE_DIR="${PALETTE_DIR:-$HOME/.local/share/org.gnome.Ptyxis/palettes}"
 readonly CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/openconnect-gnome}"
-
-readonly LAUNCHER_NAME='openconnect-gnome.desktop'
-readonly TERMINAL_LAUNCHER_NAME='openconnect-gnome-terminal.desktop'
-readonly AUTOSTART_NAME='openconnect-gnome-tray.desktop'
-readonly SESSION_COMMAND='openconnect-session'
-readonly TRAY_COMMAND='vpn-tray-indicator'
-readonly WINDOW_TITLE='VPN'
-readonly PALETTE_NAME='vpn-deep-blue'
-readonly PTYXIS_PROFILE_LABEL='VPN'
-readonly PTYXIS_SCHEMA='org.gnome.Ptyxis'
-readonly PTYXIS_PROFILE_SCHEMA='org.gnome.Ptyxis.Profile'
-readonly PTYXIS_PROFILE_PATH='/org/gnome/Ptyxis/Profiles'
-
-# Terminals that can run a command in a fresh window, most preferred first.
-readonly SUPPORTED_TERMINALS=(ptyxis gnome-terminal konsole xfce4-terminal kitty xterm)
+readonly LAUNCHER_NAME='openconnect-gnome.desktop' TERMINAL_LAUNCHER_NAME='openconnect-gnome-terminal.desktop'
+readonly AUTOSTART_NAME='openconnect-gnome-tray.desktop' SESSION_COMMAND='openconnect-session' TRAY_COMMAND='vpn-tray-indicator'
+readonly WINDOW_TITLE='VPN' PALETTE_NAME='vpn-deep-blue' PTYXIS_PROFILE_LABEL='VPN'
+readonly PTYXIS_SCHEMA='org.gnome.Ptyxis' PTYXIS_PROFILE_SCHEMA='org.gnome.Ptyxis.Profile' PTYXIS_PROFILE_PATH='/org/gnome/Ptyxis/Profiles'
 
 # Ptyxis paints its own palette over VTE, so it ignores the OSC 11 sequence that
 # recolours other VTE terminals. A dedicated profile bound to the palette is the
-# only way to colour a Ptyxis window, and a profile can only be selected with
-# --tab-with-profile, which opens a window of its own when none is running.
+# only way to colour a Ptyxis window, selected with --tab-with-profile, which
+# opens a window of its own when none is running.
 provision_ptyxis_profile() {
     command -v gsettings >/dev/null 2>&1 || return 1
-
     local existing uuid label
     existing=$(gsettings get "$PTYXIS_SCHEMA" profile-uuids 2>/dev/null) || return 1
-
     # The list is rebuilt from the uuids found rather than by editing the raw
     # value, so an empty or unexpected representation cannot corrupt it.
     local -a uuids=()
     mapfile -t uuids < <(grep -oE "[0-9a-f]{32}" <<< "$existing")
-
     for uuid in "${uuids[@]}"; do
         # gsettings quotes strings; a stubbed or future version might not.
         label=$(gsettings get "$PTYXIS_PROFILE_SCHEMA:$PTYXIS_PROFILE_PATH/$uuid/" label 2>/dev/null | tr -d "'")
-        if [[ $label == "$PTYXIS_PROFILE_LABEL" ]]; then
-            echo "$uuid"
-            return 0
-        fi
+        [[ $label == "$PTYXIS_PROFILE_LABEL" ]] && { echo "$uuid"; return 0; }
     done
-
     uuid=$(uuidgen | tr -d -)
     uuids+=("$uuid")
-
     local joined
     printf -v joined "'%s', " "${uuids[@]}"
     gsettings set "$PTYXIS_SCHEMA" profile-uuids "[${joined%, }]"
@@ -61,76 +39,33 @@ provision_ptyxis_profile() {
     echo "$uuid"
 }
 
-terminal_command_for() {
-    local terminal=$1 session_path=$2 profile_uuid=${3:-}
-    case $terminal in
-        ptyxis)
-            if [[ -n $profile_uuid ]]; then
-                echo "ptyxis --tab-with-profile=$profile_uuid --title=$WINDOW_TITLE -x $session_path"
-            else
-                echo "ptyxis --new-window --title=$WINDOW_TITLE -x $session_path"
-            fi
-            ;;
-        gnome-terminal)  echo "gnome-terminal --title=$WINDOW_TITLE -- $session_path" ;;
-        konsole)         echo "konsole -p tabtitle=$WINDOW_TITLE -e $session_path" ;;
-        xfce4-terminal)  echo "xfce4-terminal --title=$WINDOW_TITLE -x $session_path" ;;
-        kitty)           echo "kitty --title $WINDOW_TITLE $session_path" ;;
-        xterm)           echo "xterm -T $WINDOW_TITLE -e $session_path" ;;
-        *)               return 1 ;;
-    esac
-}
-
-detect_terminal() {
-    local terminal
-    for terminal in "${SUPPORTED_TERMINALS[@]}"; do
-        if command -v "$terminal" >/dev/null 2>&1; then
-            echo "$terminal"
-            return 0
-        fi
-    done
-    return 1
-}
-
-render_template() {
-    local template=$1 destination=$2 terminal_command=$3 needs_terminal=$4
-    sed -e "s|@TERMINAL_COMMAND@|$terminal_command|g" \
-        -e "s|@NEEDS_TERMINAL@|$needs_terminal|g" \
-        -e "s|@BIN_DIR@|$BIN_DIR|g" \
-        "$template" > "$destination"
-}
-
 install_all() {
     mkdir -p "$BIN_DIR" "$APPLICATIONS_DIR" "$PALETTE_DIR" "$CONFIG_DIR"
-
     ln -sf "$SOURCE_DIR/bin/$SESSION_COMMAND" "$BIN_DIR/$SESSION_COMMAND"
     ln -sf "$SOURCE_DIR/bin/$TRAY_COMMAND" "$BIN_DIR/$TRAY_COMMAND"
-
-    local terminal terminal_command needs_terminal profile_uuid=''
-    if terminal=$(detect_terminal); then
-        if [[ $terminal == ptyxis ]]; then
-            profile_uuid=$(provision_ptyxis_profile) ||
-                echo "Could not create a Ptyxis profile, window will use default colours" >&2
-            [[ -n $profile_uuid ]] && echo "Ptyxis profile: $profile_uuid ($PALETTE_NAME)"
+    local terminal_command needs_terminal=false
+    if command -v ptyxis >/dev/null 2>&1; then
+        local profile_uuid='' window_flag='--new-window'
+        profile_uuid=$(provision_ptyxis_profile) ||
+            echo "Could not create a Ptyxis profile, window will use default colours" >&2
+        if [[ -n $profile_uuid ]]; then
+            window_flag="--tab-with-profile=$profile_uuid"
+            echo "Ptyxis profile: $profile_uuid ($PALETTE_NAME)"
         fi
-        terminal_command=$(terminal_command_for "$terminal" "$BIN_DIR/$SESSION_COMMAND" "$profile_uuid")
-        needs_terminal=false
-        echo "Launcher will use: $terminal"
+        terminal_command="ptyxis $window_flag --title=$WINDOW_TITLE -x $BIN_DIR/$SESSION_COMMAND"
     else
-        # No known terminal: let the desktop environment supply one.
+        # No Ptyxis: let the desktop environment supply a terminal.
         terminal_command="$BIN_DIR/$SESSION_COMMAND"
         needs_terminal=true
-        echo "No supported terminal found, falling back to Terminal=true"
+        echo "Ptyxis not found, falling back to Terminal=true"
     fi
+    sed -e "s|@TERMINAL_COMMAND@|$terminal_command|g" -e "s|@NEEDS_TERMINAL@|$needs_terminal|g" \
+        -e "s|@BIN_DIR@|$BIN_DIR|g" "$SOURCE_DIR/share/applications/$LAUNCHER_NAME.in" \
+        > "$APPLICATIONS_DIR/$LAUNCHER_NAME"
 
-    render_template "$SOURCE_DIR/share/applications/$LAUNCHER_NAME.in" \
-        "$APPLICATIONS_DIR/$LAUNCHER_NAME" "$terminal_command" "$needs_terminal"
-
-    # The Open Terminal feature was removed; clear any entry an older install left.
-    rm -f "$APPLICATIONS_DIR/$TERMINAL_LAUNCHER_NAME"
-    # The tray is started by the session, not at login: it exists only while a
-    # tunnel does. Clear an autostart entry an older install left behind.
-    rm -f "$AUTOSTART_DIR/$AUTOSTART_NAME"
-
+    # The Open Terminal feature and login autostart were removed; clear any
+    # entries an older install left behind.
+    rm -f "$APPLICATIONS_DIR/$TERMINAL_LAUNCHER_NAME" "$AUTOSTART_DIR/$AUTOSTART_NAME"
     install -m 644 "$SOURCE_DIR/share/palettes/vpn-deep-blue.palette" "$PALETTE_DIR/"
 
     if [[ ! -e $CONFIG_DIR/config ]]; then
@@ -139,10 +74,8 @@ install_all() {
     else
         echo "Kept existing config at $CONFIG_DIR/config"
     fi
-
     command -v update-desktop-database >/dev/null 2>&1 &&
         update-desktop-database "$APPLICATIONS_DIR" 2>/dev/null
-
     echo "Installed. The tray appears when a VPN session starts."
 }
 
