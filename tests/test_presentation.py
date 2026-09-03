@@ -10,8 +10,9 @@ from openconnect_gnome.presentation import (  # noqa: E402
     CONNECT_LABEL,
     FALLBACK_ICON,
     IPV6_BYPASS_WARNING,
+    DISCONNECT_LABEL,
     IPV6_ORPHAN_WARNING,
-    QUIT_VPN_LABEL,
+    QUIT_LABEL,
     action_labels,
     choose_icon,
     status_labels,
@@ -63,25 +64,24 @@ class StatusLabelTests(unittest.TestCase):
 
 
 class ActionLabelTests(unittest.TestCase):
-    def test_offers_quit_vpn_while_connected(self):
-        self.assertEqual(action_labels(CONNECTED), [QUIT_VPN_LABEL])
+    def test_toggle_offers_disconnect_while_connected(self):
+        self.assertEqual(action_labels(CONNECTED)[0], DISCONNECT_LABEL)
 
-    def test_offers_quit_vpn_while_still_connecting(self):
-        self.assertEqual(action_labels(CONNECTING), [QUIT_VPN_LABEL])
+    def test_toggle_offers_disconnect_while_still_connecting(self):
+        self.assertEqual(action_labels(CONNECTING)[0], DISCONNECT_LABEL)
 
-    def test_offers_connect_when_nothing_running(self):
-        self.assertEqual(action_labels(DISCONNECTED), [CONNECT_LABEL])
+    def test_toggle_offers_connect_when_nothing_running(self):
+        self.assertEqual(action_labels(DISCONNECTED)[0], CONNECT_LABEL)
 
-    def test_exactly_one_action_in_every_state(self):
+    def test_quit_is_offered_in_every_state(self):
         for state in (CONNECTED, CONNECTING, DISCONNECTED, ORPHANED_BLACKHOLE):
             with self.subTest(state=state):
-                self.assertEqual(len(action_labels(state)), 1)
+                self.assertEqual(action_labels(state)[1], QUIT_LABEL)
 
-    def test_no_action_touches_the_indicator_alone(self):
-        for state in (CONNECTED, CONNECTING, DISCONNECTED):
+    def test_exactly_two_actions_in_every_state(self):
+        for state in (CONNECTED, CONNECTING, DISCONNECTED, ORPHANED_BLACKHOLE):
             with self.subTest(state=state):
-                for label in action_labels(state):
-                    self.assertNotIn("Indicator", label)
+                self.assertEqual(len(action_labels(state)), 2)
 
 
 if __name__ == "__main__":

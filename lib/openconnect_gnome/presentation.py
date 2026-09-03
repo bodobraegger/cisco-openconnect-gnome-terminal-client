@@ -1,8 +1,8 @@
 """Turns a TunnelStatus into the labels and icon the tray shows.
 
 Separate from the GTK code so the display logic is testable without a display.
-The tray is the only control surface, so every menu action here acts on the VPN
-itself; there is deliberately no action that touches only the indicator.
+The tray is the only control surface: a connect/disconnect toggle and a Quit
+that closes the tunnel and the indicator together.
 """
 
 from __future__ import annotations
@@ -19,7 +19,8 @@ DISCONNECTED_ICONS = (
 FALLBACK_ICON = "network-workgroup"
 
 CONNECT_LABEL = "Connect..."
-QUIT_VPN_LABEL = "Quit VPN"
+DISCONNECT_LABEL = "Disconnect"
+QUIT_LABEL = "Quit"
 
 IPV6_BYPASS_WARNING = "Warning: IPv6 is open, traffic may bypass the tunnel"
 IPV6_ORPHAN_WARNING = "Warning: IPv6 still blackholed with no tunnel"
@@ -56,7 +57,6 @@ def status_labels(status: TunnelStatus) -> list[str]:
 
 
 def action_labels(status: TunnelStatus) -> list[str]:
-    """One action, matching the single thing worth doing in the current state."""
-    if status.process_running:
-        return [QUIT_VPN_LABEL]
-    return [CONNECT_LABEL]
+    """A connect/disconnect toggle, plus Quit, which stops the tunnel and exits."""
+    toggle = DISCONNECT_LABEL if status.process_running else CONNECT_LABEL
+    return [toggle, QUIT_LABEL]
