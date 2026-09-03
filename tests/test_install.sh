@@ -62,4 +62,14 @@ assert_equals "config deliberately preserved" \
 ./install.sh nonsense >/dev/null 2>&1
 assert_equals "unknown subcommand exits 64" "$?" 64
 
+echo "helper commands:"
+printf "VPN_USER='u@example.org'\nVPN_GATEWAY='vpn.example.org/g'\nVPN_AUTHGROUP='g'\n" > "$CONFIG_DIR/config"
+HELPERS=$(./install.sh helpers 2>&1)
+assert_contains "grants NOPASSWD only to the two helpers" \
+    "$HELPERS" "NOPASSWD: /usr/local/sbin/vpn-start, /usr/local/sbin/vpn-stop"
+assert_contains "helper uses absolute binary paths" "$HELPERS" "/usr/sbin/openconnect"
+assert_contains "helper carries the configured gateway" "$HELPERS" "vpn.example.org/g"
+assert_contains "validates the sudoers file" "$HELPERS" "visudo -c"
+assert_not_contains "helper accepts no arguments" "$HELPERS" '"$1"' 
+
 report

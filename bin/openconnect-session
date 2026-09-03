@@ -9,6 +9,11 @@ readonly STALE_SESSION_GRACE_SECONDS=5
 readonly IPV6_BLACKHOLE_METRIC=1
 readonly OPENCONNECT_PIDFILE='/run/openconnect-gnome.pid'
 readonly TRAY_COMMAND_NAME='vpn-tray-indicator'
+# Root-owned, argument-free, generated from this config by `install.sh helpers`.
+# When a NOPASSWD sudoers rule grants them, connecting and disconnecting never
+# prompt. Without them the script falls back to plain sudo, which does prompt.
+readonly PRIVILEGED_START_HELPER='/usr/local/sbin/vpn-start'
+readonly PRIVILEGED_STOP_HELPER='/usr/local/sbin/vpn-stop'
 readonly EXIT_CONFIG_MISSING=2 EXIT_CONFIG_INCOMPLETE=3 EXIT_NO_PRIVILEGES=4
 
 load_configuration() {
@@ -64,36 +69,49 @@ restore_system_state() {
     # Background mode leaves openconnect running past this exit; the tray removes
     # the route when it stops the tunnel, and a crash is caught by reconciliation.
     pgrep -x openconnect >/dev/null 2>&1 && return 0
-    sudo ip -6 route del unreachable default metric "$IPV6_BLACKHOLE_METRIC" 2>/dev/null
+    if [[ -x $PRIVILEGED_STOP_HELPER ]]; then
+        sudo -n "$PRIVILEGED_STOP_HELPER" 2>/dev/null
+    else
+        sudo ip -6 route del unreachable default metric "$IPV6_BLACKHOLE_METRIC" 2>/dev/null
+    fi
     echo "IPv6 default route restored"
 }
 
 main() {
     load_configuration || return $?
-    sudo -v || { echo "Could not obtain sudo privileges, aborting" >&2; return $EXIT_NO_PRIVILEGES; }
-    terminate_stale_sessions
-    if [[ $BLACKHOLE_IPV6 == yes ]] && ip -6 route show default | grep -q "unreachable .*metric $IPV6_BLACKHOLE_METRIC"; then
-        echo "Removing IPv6 blackhole left by a previous run"
-        sudo ip -6 route del unreachable default metric "$IPV6_BLACKHOLE_METRIC" 2>/dev/null
+
+    local openconnect_status
+    if [[ -x $PRIVILEGED_START_HELPER ]]; then
+        # The helper already does stale-session cleanup and the blackhole, so
+        # none of the steps below are needed and nothing has to prompt.
+        trap restore_system_state EXIT INT TERM HUP QUIT
+        sudo -n "$PRIVILEGED_START_HELPER"
+        openconnect_status=$?
+    else
+        sudo -v || { echo "Could not obtain sudo privileges, aborting" >&2; return $EXIT_NO_PRIVILEGES; }
+        terminate_stale_sessions
+        if [[ $BLACKHOLE_IPV6 == yes ]] && ip -6 route show default | grep -q "unreachable .*metric $IPV6_BLACKHOLE_METRIC"; then
+            echo "Removing IPv6 blackhole left by a previous run"
+            sudo ip -6 route del unreachable default metric "$IPV6_BLACKHOLE_METRIC" 2>/dev/null
+        fi
+
+        trap restore_system_state EXIT INT TERM HUP QUIT
+        if [[ $BLACKHOLE_IPV6 == yes ]]; then
+            sudo ip -6 route replace unreachable default metric "$IPV6_BLACKHOLE_METRIC"
+            echo "IPv6 blackholed for the duration of the VPN session"
+        fi
+        local -a background_options=()
+        [[ $RUN_IN_BACKGROUND == yes ]] && background_options=(--background --pid-file "$OPENCONNECT_PIDFILE")
+        sudo openconnect \
+            -u "$VPN_USER" \
+            --useragent=AnyConnect \
+            -g "$VPN_AUTHGROUP" \
+            --no-external-auth \
+            "${background_options[@]}" \
+            "$VPN_GATEWAY"
+        openconnect_status=$?
     fi
 
-    trap restore_system_state EXIT INT TERM HUP QUIT
-    if [[ $BLACKHOLE_IPV6 == yes ]]; then
-        sudo ip -6 route replace unreachable default metric "$IPV6_BLACKHOLE_METRIC"
-        echo "IPv6 blackholed for the duration of the VPN session"
-    fi
-    # Daemonises once authentication succeeds, so this window can be closed
-    # without dropping the tunnel; the tray then represents the session.
-    local -a background_options=()
-    [[ $RUN_IN_BACKGROUND == yes ]] && background_options=(--background --pid-file "$OPENCONNECT_PIDFILE")
-    sudo openconnect \
-        -u "$VPN_USER" \
-        --useragent=AnyConnect \
-        -g "$VPN_AUTHGROUP" \
-        --no-external-auth \
-        "${background_options[@]}" \
-        "$VPN_GATEWAY"
-    local openconnect_status=$?
     (( openconnect_status == 0 )) && pgrep -x openconnect >/dev/null 2>&1 && start_tray_indicator
     restore_system_state
     return $openconnect_status
