@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=VPN Tray Indicator
+Comment=Shows VPN tunnel status in the top bar
+Exec=@BIN_DIR@/vpn-tray-indicator
+Icon=network-vpn
+Terminal=false
+Type=Application
+Categories=Network;
+X-GNOME-Autostart-enabled=true

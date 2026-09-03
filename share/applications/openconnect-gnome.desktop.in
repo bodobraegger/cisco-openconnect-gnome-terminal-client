@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=VPN (Cisco AnyConnect)
+Comment=Connect to the VPN via openconnect in a distinctly coloured terminal
+Exec=@TERMINAL_COMMAND@
+Icon=network-vpn
+Terminal=@NEEDS_TERMINAL@
+Type=Application
+Categories=Network;Security;
+Keywords=vpn;openconnect;anyconnect;cisco;
