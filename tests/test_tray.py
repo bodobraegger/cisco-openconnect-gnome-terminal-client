@@ -96,13 +96,15 @@ class IconTests(unittest.TestCase):
 
 
 class StopCommandTests(unittest.TestCase):
-    def test_stop_kills_the_tunnel_and_clears_the_route_in_one_prompt(self):
-        # Both actions must be in a single privileged call, otherwise the user is
-        # asked to authenticate twice and a cancel can leave the route behind.
-        joined = " ".join(tray.STOP_TUNNEL_COMMAND)
-        self.assertIn("pkexec", joined)
-        self.assertIn("pkill", joined)
-        self.assertIn("route del", joined)
+    def test_preferred_stop_is_the_passwordless_helper(self):
+        self.assertEqual(tray.STOP_TUNNEL_COMMAND, ("sudo", "-n", tray.PRIVILEGED_STOP_HELPER))
+
+    def test_fallback_stop_does_both_jobs_in_one_prompt(self):
+        # Both actions in a single privileged call, otherwise the user
+        # authenticates twice and a cancel can leave the route behind.
+        joined = " ".join(tray.STOP_TUNNEL_FALLBACK_COMMAND)
+        for expected in ("pkexec", "pkill", "route del"):
+            self.assertIn(expected, joined)
 
 
 if __name__ == "__main__":

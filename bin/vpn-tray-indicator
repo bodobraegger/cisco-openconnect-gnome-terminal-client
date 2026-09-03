@@ -35,7 +35,14 @@ IPV6_DEFAULT_ROUTE_QUERY = ("ip", "-6", "route", "show", "default")
 
 # One pkexec call for one auth prompt: killing openconnect without also
 # deleting the blackhole route (no guardian left to do it) would strand IPv6.
-STOP_TUNNEL_COMMAND = (
+# Stopping needs root twice over: killing openconnect and deleting the blackhole
+# route. Both go in one call so a single authentication covers them and a cancel
+# cannot leave the route behind. PRIVILEGED_STOP_HELPER is a root-owned script
+# taking no arguments; where a NOPASSWD sudoers rule grants it, stopping needs no
+# prompt at all, and pkexec remains the fallback when it is not installed.
+PRIVILEGED_STOP_HELPER = "/usr/local/sbin/vpn-stop"
+STOP_TUNNEL_COMMAND = ("sudo", "-n", PRIVILEGED_STOP_HELPER)
+STOP_TUNNEL_FALLBACK_COMMAND = (
     "pkexec", "sh", "-c",
     f"pkill -x {OPENCONNECT_PROCESS_NAME}; "
     f"ip -6 route del unreachable default metric {IPV6_BLACKHOLE_METRIC} 2>/dev/null; exit 0",
@@ -196,8 +203,14 @@ class VpnTrayIndicator:
             print(f"{summary}: {body}", file=sys.stderr)
 
     def stop_tunnel(self) -> bool:
+        if os.access(PRIVILEGED_STOP_HELPER, os.X_OK):
+            try:
+                if subprocess.run(STOP_TUNNEL_COMMAND, timeout=10).returncode == 0:
+                    return True
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         try:
-            subprocess.Popen(STOP_TUNNEL_COMMAND)
+            subprocess.Popen(STOP_TUNNEL_FALLBACK_COMMAND)
         except OSError as error:
             self.notify("Cannot stop VPN", str(error))
             return False
