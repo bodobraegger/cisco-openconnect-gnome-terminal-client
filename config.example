@@ -1,0 +1,15 @@
+# Copy to ~/.config/openconnect-gnome/config and edit.
+# Sourced by bin/openconnect-session, so shell quoting rules apply.
+
+VPN_USER='user@example.ethz.ch'
+VPN_GATEWAY='sslvpn.ethz.ch/gess'
+VPN_AUTHGROUP='gess'
+
+# Background colour applied to the terminal for the duration of the session,
+# as an OSC 11 colour spec. Set to an empty string to leave the terminal alone.
+TERMINAL_BACKGROUND_COLOR='#0b1e3d'
+
+# Blackhole the IPv6 default route while connected. Required whenever the VPN
+# gateway is IPv4-only but services behind it resolve to dual-stack identity
+# providers, otherwise part of a login flow escapes the tunnel.
+BLACKHOLE_IPV6='yes'
