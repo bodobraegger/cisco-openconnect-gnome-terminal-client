@@ -16,6 +16,7 @@ readonly TERMINAL_LAUNCHER_NAME='openconnect-gnome-terminal.desktop'
 readonly AUTOSTART_NAME='openconnect-gnome-tray.desktop'
 readonly SESSION_COMMAND='openconnect-session'
 readonly TRAY_COMMAND='vpn-tray-indicator'
+readonly TRAY_STOP_GRACE_SECONDS=5
 readonly WINDOW_TITLE='VPN'
 readonly PALETTE_NAME='vpn-deep-blue'
 readonly PTYXIS_PROFILE_LABEL='VPN'
@@ -99,6 +100,34 @@ render_template() {
         "$template" > "$destination"
 }
 
+# An install replaces the code but not the process already running it, so an
+# update silently has no effect until the indicator is restarted. Verification is
+# by pid: re-running pgrep afterwards happily matches a survivor and reports
+# success that did not happen.
+restart_running_tray() {
+    local old_pids
+    old_pids=$(pgrep -f "$BIN_DIR/$TRAY_COMMAND") || return 0
+
+    kill $old_pids 2>/dev/null
+    local waited=0
+    while (( waited < TRAY_STOP_GRACE_SECONDS )) && kill -0 ${old_pids%% *} 2>/dev/null; do
+        sleep 1
+        (( waited++ ))
+    done
+    kill -0 ${old_pids%% *} 2>/dev/null && kill -9 $old_pids 2>/dev/null
+
+    setsid --fork "$BIN_DIR/$TRAY_COMMAND" >/dev/null 2>&1
+    sleep 2
+
+    local new_pid
+    new_pid=$(pgrep -f "$BIN_DIR/$TRAY_COMMAND" | head -1)
+    if [[ -n $new_pid && $new_pid != "${old_pids%% *}" ]]; then
+        echo "Restarted tray indicator (pid $new_pid)"
+    else
+        echo "Tray indicator did not restart, start it with: $BIN_DIR/$TRAY_COMMAND &" >&2
+    fi
+}
+
 install_all() {
     mkdir -p "$BIN_DIR" "$APPLICATIONS_DIR" "$AUTOSTART_DIR" "$PALETTE_DIR" "$CONFIG_DIR"
 
@@ -141,6 +170,8 @@ install_all() {
 
     command -v update-desktop-database >/dev/null 2>&1 &&
         update-desktop-database "$APPLICATIONS_DIR" 2>/dev/null
+
+    restart_running_tray
 
     echo "Installed. Start the tray now with: $BIN_DIR/$TRAY_COMMAND &"
 }
