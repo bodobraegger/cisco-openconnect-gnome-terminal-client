@@ -14,6 +14,7 @@ from openconnect_gnome.presentation import (  # noqa: E402
     IPV6_OPEN_LABEL,
     OPEN_TERMINAL_LABEL,
     QUIT_LABEL,
+    QUIT_LABEL_IDLE,
     choose_icon,
     action_labels,
     status_labels,
@@ -80,7 +81,17 @@ class ActionLabelTests(unittest.TestCase):
     def test_quit_is_always_available(self):
         for state in (CONNECTED, CONNECTING, DISCONNECTED):
             with self.subTest(state=state):
+                labels = action_labels(state)
+                self.assertTrue(any(label.startswith("Quit") for label in labels))
+
+    def test_quit_warns_that_the_tunnel_survives_while_connected(self):
+        for state in (CONNECTED, CONNECTING):
+            with self.subTest(state=state):
                 self.assertIn(QUIT_LABEL, action_labels(state))
+                self.assertIn("VPN stays up", QUIT_LABEL)
+
+    def test_quit_does_not_warn_when_nothing_is_running(self):
+        self.assertIn(QUIT_LABEL_IDLE, action_labels(DISCONNECTED))
 
 
 if __name__ == "__main__":

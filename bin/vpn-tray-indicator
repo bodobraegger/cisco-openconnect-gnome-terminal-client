@@ -22,6 +22,7 @@ from openconnect_gnome.presentation import (  # noqa: E402
     FALLBACK_ICON,
     OPEN_TERMINAL_LABEL,
     QUIT_LABEL,
+    QUIT_LABEL_IDLE,
     action_labels,
     choose_icon,
     status_labels,
@@ -55,6 +56,7 @@ class VpnTrayIndicator:
             DISCONNECT_LABEL: self.on_disconnect,
             OPEN_TERMINAL_LABEL: self.on_open_terminal,
             QUIT_LABEL: self.on_quit,
+            QUIT_LABEL_IDLE: self.on_quit,
         }
         self.refresh()
         GLib.timeout_add_seconds(POLL_INTERVAL_SECONDS, self.on_tick)

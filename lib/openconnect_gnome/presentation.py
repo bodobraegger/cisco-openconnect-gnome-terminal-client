@@ -19,7 +19,8 @@ FALLBACK_ICON = "network-workgroup"
 CONNECT_LABEL = "Connect..."
 DISCONNECT_LABEL = "Disconnect"
 OPEN_TERMINAL_LABEL = "Open Terminal"
-QUIT_LABEL = "Quit"
+QUIT_LABEL = "Quit Indicator (VPN stays up)"
+QUIT_LABEL_IDLE = "Quit Indicator"
 
 IPV6_BLACKHOLED_LABEL = "IPv6 blackholed (traffic forced through tunnel)"
 IPV6_OPEN_LABEL = "IPv6 open (traffic may bypass tunnel)"
@@ -61,5 +62,8 @@ def action_labels(status: TunnelStatus) -> list[str]:
     Opening a terminal stays available in every state: in background mode there
     is no session window to go back to, so the tray is the only way to get one.
     """
-    first = DISCONNECT_LABEL if status.process_running else CONNECT_LABEL
-    return [first, OPEN_TERMINAL_LABEL, QUIT_LABEL]
+    if status.process_running:
+        # Quitting the indicator leaves the tunnel up, which is invisible once
+        # the tray is gone, so the label has to say so.
+        return [DISCONNECT_LABEL, OPEN_TERMINAL_LABEL, QUIT_LABEL]
+    return [CONNECT_LABEL, OPEN_TERMINAL_LABEL, QUIT_LABEL_IDLE]
