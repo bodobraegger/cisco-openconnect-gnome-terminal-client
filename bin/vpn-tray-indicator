@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Shows VPN tunnel state in the GNOME top bar and offers connect/disconnect."""
+
+from __future__ import annotations
+
+import pathlib
+import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "lib"))
+
+import gi  # noqa: E402
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("AppIndicator3", "0.1")
+
+from gi.repository import AppIndicator3, GLib, Gio, Gtk  # noqa: E402
+
+from openconnect_gnome.presentation import (  # noqa: E402
+    CONNECT_LABEL,
+    DISCONNECT_LABEL,
+    FALLBACK_ICON,
+    QUIT_LABEL,
+    action_labels,
+    choose_icon,
+    status_labels,
+)
+from openconnect_gnome.status import read_tunnel_status  # noqa: E402
+
+INDICATOR_ID = "openconnect-gnome-tray"
+POLL_INTERVAL_SECONDS = 3
+LAUNCHER_DESKTOP_ID = "openconnect-gnome.desktop"
+DISCONNECT_COMMAND = ("pkexec", "pkill", "-x", "openconnect")
+NOTIFY_COMMAND = ("notify-send", "--app-name=VPN")
+
+
+class LauncherNotInstalledError(RuntimeError):
+    """The .desktop entry the tray launches is missing or not yet indexed."""
+
+
+class VpnTrayIndicator:
+    def __init__(self) -> None:
+        self.indicator = AppIndicator3.Indicator.new(
+            INDICATOR_ID,
+            FALLBACK_ICON,
+            AppIndicator3.IndicatorCategory.SYSTEM_SERVICES,
+        )
+        self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+        self.menu = Gtk.Menu()
+        self.indicator.set_menu(self.menu)
+        self.handlers = {
+            CONNECT_LABEL: self.on_connect,
+            DISCONNECT_LABEL: self.on_disconnect,
+            QUIT_LABEL: self.on_quit,
+        }
+        self.refresh()
+        GLib.timeout_add_seconds(POLL_INTERVAL_SECONDS, self.on_tick)
+
+    @staticmethod
+    def icon_exists(name: str) -> bool:
+        return Gtk.IconTheme.get_default().has_icon(name)
+
+    def on_tick(self) -> bool:
+        self.refresh()
+        return GLib.SOURCE_CONTINUE
+
+    def refresh(self) -> None:
+        status = read_tunnel_status()
+        summary = status.summary()
+        self.indicator.set_icon_full(choose_icon(status, self.icon_exists), summary)
+        self.indicator.set_title(summary)
+        self.rebuild_menu(status)
+
+    def rebuild_menu(self, status) -> None:
+        for child in self.menu.get_children():
+            self.menu.remove(child)
+
+        for label in status_labels(status):
+            item = Gtk.MenuItem(label=label)
+            item.set_sensitive(False)
+            self.menu.append(item)
+
+        self.menu.append(Gtk.SeparatorMenuItem())
+
+        for label in action_labels(status):
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate", self.handlers[label])
+            self.menu.append(item)
+
+        self.menu.show_all()
+
+    @staticmethod
+    def notify(summary: str, body: str = "") -> None:
+        try:
+            subprocess.Popen([*NOTIFY_COMMAND, summary, body])
+        except OSError:
+            print(f"{summary}: {body}", file=sys.stderr)
+
+    def on_connect(self, _item) -> None:
+        # Launching the .desktop entry rather than a hard-coded terminal command
+        # keeps the launcher definition in exactly one place.
+        launcher = Gio.DesktopAppInfo.new(LAUNCHER_DESKTOP_ID)
+        if launcher is None:
+            self.notify(
+                "Cannot start VPN",
+                f"{LAUNCHER_DESKTOP_ID} is not installed. Run install.sh.",
+            )
+            return
+        try:
+            launcher.launch(None, None)
+        except GLib.Error as error:
+            self.notify("Cannot start VPN", error.message)
+
+    def on_disconnect(self, _item) -> None:
+        try:
+            subprocess.Popen(DISCONNECT_COMMAND)
+        except OSError as error:
+            self.notify("Cannot disconnect", str(error))
+            return
+        # The session script's guardian withdraws the IPv6 blackhole once the
+        # openconnect process is gone, so a tray-initiated disconnect still ends
+        # with the network restored.
+        GLib.timeout_add_seconds(1, self.on_tick)
+
+    def on_quit(self, _item) -> None:
+        Gtk.main_quit()
+
+
+def main() -> int:
+    VpnTrayIndicator()
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
