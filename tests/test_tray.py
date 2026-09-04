@@ -55,6 +55,16 @@ class ParsingTests(unittest.TestCase):
     def test_authgroup_is_none_without_a_match(self):
         self.assertIsNone(tray.parse_authgroup("VPN_USER='u@example.org'\n"))
 
+    def test_finds_user_local_part_in_a_config_file(self):
+        config = "VPN_USER='bbodo@gess.ethz.ch'\nVPN_AUTHGROUP='gess'\n"
+        self.assertEqual(tray.parse_user(config), "bbodo")
+
+    def test_user_without_an_at_sign_is_used_as_is(self):
+        self.assertEqual(tray.parse_user("VPN_USER='bbodo'\n"), "bbodo")
+
+    def test_user_is_none_without_a_match(self):
+        self.assertIsNone(tray.parse_user("VPN_AUTHGROUP='gess'\n"))
+
 
 class StatusTests(unittest.TestCase):
     def test_reads_a_connected_tunnel(self):
@@ -63,18 +73,18 @@ class StatusTests(unittest.TestCase):
             tray.PROCESS_QUERY: "39446\n",
             tray.IPV6_DEFAULT_ROUTE_QUERY: ROUTE_BLACKHOLED,
         }
-        status = tray.read_tunnel_status(responses.__getitem__, lambda: "gess")
+        status = tray.read_tunnel_status(responses.__getitem__, lambda: ("bbodo", "gess"))
         self.assertTrue(status.connected)
         self.assertTrue(status.ipv6_blackholed)
-        self.assertEqual(status.summary(), "Connected on\ntun0 (10.249.65.41)\nvia /gess")
+        self.assertEqual(status.summary(), "bbodo@gess connected on\ntun0 (10.249.65.41)")
 
-    def test_connected_without_a_readable_config_omits_the_namespace(self):
+    def test_connected_without_a_readable_config_falls_back_to_a_plain_summary(self):
         responses = {
             tray.ADDRESS_QUERY: ADDR_WITH_TUNNEL,
             tray.PROCESS_QUERY: "39446\n",
             tray.IPV6_DEFAULT_ROUTE_QUERY: ROUTE_BLACKHOLED,
         }
-        status = tray.read_tunnel_status(responses.__getitem__, lambda: None)
+        status = tray.read_tunnel_status(responses.__getitem__, lambda: (None, None))
         self.assertEqual(status.summary(), "Connected on\ntun0 (10.249.65.41)")
 
     def test_process_without_address_is_still_connecting(self):
@@ -83,7 +93,7 @@ class StatusTests(unittest.TestCase):
             tray.PROCESS_QUERY: "39446\n",
             tray.IPV6_DEFAULT_ROUTE_QUERY: ROUTE_NORMAL,
         }
-        status = tray.read_tunnel_status(responses.__getitem__, lambda: "gess")
+        status = tray.read_tunnel_status(responses.__getitem__, lambda: ("bbodo", "gess"))
         self.assertFalse(status.connected)
         self.assertEqual(status.summary(), "Connecting, no tunnel address yet")
 
@@ -93,7 +103,7 @@ class StatusTests(unittest.TestCase):
             tray.PROCESS_QUERY: "",
             tray.IPV6_DEFAULT_ROUTE_QUERY: ROUTE_NORMAL,
         }
-        status = tray.read_tunnel_status(responses.__getitem__, lambda: "gess")
+        status = tray.read_tunnel_status(responses.__getitem__, lambda: ("bbodo", "gess"))
         self.assertEqual(status.summary(), "Disconnected")
 
 

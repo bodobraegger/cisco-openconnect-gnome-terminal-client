@@ -36,9 +36,10 @@ PROCESS_QUERY = ("pgrep", "-x", OPENCONNECT_PROCESS_NAME)
 IPV6_DEFAULT_ROUTE_QUERY = ("ip", "-6", "route", "show", "default")
 
 # Same config file bin/openconnect-session reads, so the tray shows the
-# namespace (e.g. /gess) the running tunnel was actually started with.
+# identity (e.g. bbodo@gess) the running tunnel was actually started with.
 CONFIG_FILE = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "openconnect-gnome" / "config"
 AUTHGROUP_PATTERN = re.compile(r"""^\s*VPN_AUTHGROUP=['"]?([^'"\s]+)['"]?""", re.MULTILINE)
+USER_PATTERN = re.compile(r"""^\s*VPN_USER=['"]?([^'"\s]+)['"]?""", re.MULTILINE)
 
 # One pkexec call for one auth prompt: killing openconnect without also
 # deleting the blackhole route (no guardian left to do it) would strand IPv6.
@@ -78,6 +79,7 @@ class TunnelStatus:
     process_running: bool
     ipv6_blackholed: bool
     authgroup: str | None = None
+    user: str | None = None
 
     @property
     def connected(self) -> bool:
@@ -85,8 +87,9 @@ class TunnelStatus:
 
     def summary(self) -> str:
         if self.connected:
-            suffix = f"\nvia /{self.authgroup}" if self.authgroup else ""
-            return f"Connected on\n{self.interface} ({self.address}){suffix}"
+            if self.user and self.authgroup:
+                return f"{self.user}@{self.authgroup} connected on\n{self.interface} ({self.address})"
+            return f"Connected on\n{self.interface} ({self.address})"
         if self.process_running:
             return "Connecting, no tunnel address yet"
         return "Disconnected"
@@ -126,21 +129,30 @@ def parse_authgroup(config_text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _read_authgroup(config_path: Path = CONFIG_FILE) -> str | None:
+def parse_user(config_text: str) -> str | None:
+    """Local part of VPN_USER (before the '@'), shown as the tunnel's identity."""
+    match = USER_PATTERN.search(config_text)
+    return match.group(1).split("@", 1)[0] if match else None
+
+
+def _read_identity(config_path: Path = CONFIG_FILE) -> tuple[str | None, str | None]:
     try:
-        return parse_authgroup(config_path.read_text())
+        text = config_path.read_text()
     except OSError:
-        return None
+        return None, None
+    return parse_user(text), parse_authgroup(text)
 
 
-def read_tunnel_status(run_command=_run, read_authgroup=_read_authgroup) -> TunnelStatus:
+def read_tunnel_status(run_command=_run, read_identity=_read_identity) -> TunnelStatus:
     interface, address = parse_tunnel_address(run_command(ADDRESS_QUERY))
+    user, authgroup = read_identity()
     return TunnelStatus(
         interface=interface,
         address=address,
         process_running=bool(run_command(PROCESS_QUERY).strip()),
         ipv6_blackholed=parse_ipv6_blackhole(run_command(IPV6_DEFAULT_ROUTE_QUERY)),
-        authgroup=read_authgroup(),
+        authgroup=authgroup,
+        user=user,
     )
 
 
