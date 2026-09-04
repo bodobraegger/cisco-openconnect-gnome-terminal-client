@@ -76,7 +76,7 @@ class StatusTests(unittest.TestCase):
         status = tray.read_tunnel_status(responses.__getitem__, lambda: ("bbodo", "gess"))
         self.assertTrue(status.connected)
         self.assertTrue(status.ipv6_blackholed)
-        self.assertEqual(status.summary(), "bbodo@gess connected on\ntun0 (10.249.65.41)")
+        self.assertEqual(status.summary(), "bbodo@gess connected\non tun0 (10.249.65.41)")
 
     def test_connected_without_a_readable_config_falls_back_to_a_plain_summary(self):
         responses = {
@@ -85,7 +85,7 @@ class StatusTests(unittest.TestCase):
             tray.IPV6_DEFAULT_ROUTE_QUERY: ROUTE_BLACKHOLED,
         }
         status = tray.read_tunnel_status(responses.__getitem__, lambda: (None, None))
-        self.assertEqual(status.summary(), "Connected on\ntun0 (10.249.65.41)")
+        self.assertEqual(status.summary(), "Connected\non tun0 (10.249.65.41)")
 
     def test_process_without_address_is_still_connecting(self):
         responses = {
@@ -127,7 +127,7 @@ class StatusRowMarkupTests(unittest.TestCase):
         status = tray.TunnelStatus("tun0", "10.0.0.1", True, True, "gess", "bbodo")
         text, use_markup = tray.status_row_markup(status)
         self.assertTrue(use_markup)
-        self.assertIn("bbodo@gess connected on\ntun0 (10.0.0.1)\nDisconnect", text)
+        self.assertIn("bbodo@gess connected\non tun0 (10.0.0.1)\nDisconnect", text)
         self.assertIn('size="small"', text)
 
     def test_connecting_row_also_offers_disconnect(self):
