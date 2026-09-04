@@ -97,6 +97,21 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(status.summary(), "Disconnected")
 
 
+class EqualityTests(unittest.TestCase):
+    def test_identical_status_compares_equal(self):
+        # VpnTrayIndicator.refresh() skips touching the UI when the new
+        # status equals the last one, to stop the indicator flickering on
+        # every poll while it's hovered. That guard depends on this holding.
+        first = tray.TunnelStatus("tun0", "10.0.0.1", True, True, "gess")
+        second = tray.TunnelStatus("tun0", "10.0.0.1", True, True, "gess")
+        self.assertEqual(first, second)
+
+    def test_status_with_a_different_field_compares_unequal(self):
+        base = tray.TunnelStatus("tun0", "10.0.0.1", True, True, "gess")
+        changed = tray.TunnelStatus("tun0", "10.0.0.2", True, True, "gess")
+        self.assertNotEqual(base, changed)
+
+
 class IconTests(unittest.TestCase):
     def test_states_are_visually_distinct(self):
         states = (
