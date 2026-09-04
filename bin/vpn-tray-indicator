@@ -247,9 +247,14 @@ class VpnTrayIndicator:
         item.set_sensitive(False)
         return item
 
-    def _build_status_item(self, status: TunnelStatus) -> Gtk.MenuItem:
+    def _build_status_item(self, status: TunnelStatus) -> Gtk.CheckMenuItem:
         """The status row doubles as the Connect/Disconnect action, so there's
-        no separate toggle item to keep the menu down to two rows."""
+        no separate toggle item to keep the menu down to two rows.
+
+        A plain Gtk.MenuItem closes the dropdown as soon as it's clicked.
+        Gtk.CheckMenuItem doesn't, and its check mark reads naturally as a
+        connected/disconnected indicator on top.
+        """
         text, use_markup = status_row_markup(status)
         row_label = Gtk.Label()
         row_label.set_justify(Gtk.Justification.LEFT)
@@ -257,9 +262,10 @@ class VpnTrayIndicator:
             row_label.set_markup(text)
         else:
             row_label.set_text(text)
-        item = Gtk.MenuItem()
+        item = Gtk.CheckMenuItem()
+        item.set_active(status.process_running)
         item.add(row_label)
-        item.connect("activate", self.on_disconnect if status.process_running else self.on_reconnect)
+        item.connect("toggled", self.on_disconnect if status.process_running else self.on_reconnect)
         return item
 
     @staticmethod
