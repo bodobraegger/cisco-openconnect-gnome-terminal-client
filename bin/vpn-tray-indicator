@@ -85,8 +85,8 @@ class TunnelStatus:
 
     def summary(self) -> str:
         if self.connected:
-            suffix = f" via /{self.authgroup}" if self.authgroup else ""
-            return f"Connected on {self.interface} ({self.address}){suffix}"
+            suffix = f"\nvia /{self.authgroup}" if self.authgroup else ""
+            return f"Connected on\n{self.interface} ({self.address}){suffix}"
         if self.process_running:
             return "Connecting, no tunnel address yet"
         return "Disconnected"

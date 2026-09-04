@@ -66,7 +66,7 @@ class StatusTests(unittest.TestCase):
         status = tray.read_tunnel_status(responses.__getitem__, lambda: "gess")
         self.assertTrue(status.connected)
         self.assertTrue(status.ipv6_blackholed)
-        self.assertEqual(status.summary(), "Connected on tun0 (10.249.65.41) via /gess")
+        self.assertEqual(status.summary(), "Connected on\ntun0 (10.249.65.41)\nvia /gess")
 
     def test_connected_without_a_readable_config_omits_the_namespace(self):
         responses = {
@@ -75,7 +75,7 @@ class StatusTests(unittest.TestCase):
             tray.IPV6_DEFAULT_ROUTE_QUERY: ROUTE_BLACKHOLED,
         }
         status = tray.read_tunnel_status(responses.__getitem__, lambda: None)
-        self.assertEqual(status.summary(), "Connected on tun0 (10.249.65.41)")
+        self.assertEqual(status.summary(), "Connected on\ntun0 (10.249.65.41)")
 
     def test_process_without_address_is_still_connecting(self):
         responses = {
