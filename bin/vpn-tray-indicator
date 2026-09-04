@@ -61,14 +61,9 @@ CONNECTING_ICONS = ("network-vpn-acquiring-symbolic", "network-vpn", "network-id
 DISCONNECTED_ICONS = ("network-vpn-disconnected-symbolic", "network-offline-symbolic", "network-offline")
 FALLBACK_ICON = "network-workgroup"
 CONNECT_LABEL = "Connect"
-DISCONNECT_LABEL = "Disconnect"
 QUIT_LABEL = "Quit"
 IPV6_BYPASS_WARNING = "Warning: IPv6 is open, traffic may bypass the tunnel"
 IPV6_ORPHAN_WARNING = "Warning: IPv6 still blackholed with no tunnel"
-
-# Shrinks the status/action row's font just enough that its extra Disconnect
-# line still fits without the menu item growing past a single glance.
-STATUS_ROW_MARKUP_SIZE = "small"
 
 # How long Quit waits for the tunnel to actually drop (e.g. a dismissed
 # pkexec prompt) before giving up and leaving the indicator open instead.
@@ -160,17 +155,13 @@ def read_tunnel_status(run_command=_run, read_identity=_read_identity) -> Tunnel
     )
 
 
-def status_row_markup(status: TunnelStatus) -> tuple[str, bool]:
-    """Text (and whether it's Pango markup) for the merged status/action row.
-
-    A running tunnel shows the live status plus an appended Disconnect line,
-    shrunk to fit; once it's fully down there's nothing to report, so the
-    row just offers Connect, styled the same as Quit.
-    """
+def status_row_text(status: TunnelStatus) -> str:
+    """Text for the merged status/action row. Its check mark already signals
+    connected/disconnected, so a running tunnel just shows the live status;
+    once it's fully down there's nothing to report, so it offers Connect."""
     if status.process_running:
-        text = f"{status.summary()}\n{DISCONNECT_LABEL}"
-        return f'<span size="{STATUS_ROW_MARKUP_SIZE}">{GLib.markup_escape_text(text)}</span>', True
-    return CONNECT_LABEL, False
+        return status.summary()
+    return CONNECT_LABEL
 
 
 def choose_icon(status: TunnelStatus, icon_exists) -> str:
@@ -249,19 +240,15 @@ class VpnTrayIndicator:
 
     def _build_status_item(self, status: TunnelStatus) -> Gtk.CheckMenuItem:
         """The status row doubles as the Connect/Disconnect action, so there's
-        no separate toggle item to keep the menu down to two rows.
+        no separate toggle item to keep the menu down to two rows. Its check
+        mark carries the connected/disconnected state, so the text doesn't
+        have to spell out the action.
 
-        A plain Gtk.MenuItem closes the dropdown as soon as it's clicked.
-        Gtk.CheckMenuItem doesn't, and its check mark reads naturally as a
-        connected/disconnected indicator on top.
+        A plain Gtk.MenuItem closes the dropdown as soon as it's clicked;
+        Gtk.CheckMenuItem doesn't.
         """
-        text, use_markup = status_row_markup(status)
-        row_label = Gtk.Label()
+        row_label = Gtk.Label(label=status_row_text(status))
         row_label.set_justify(Gtk.Justification.LEFT)
-        if use_markup:
-            row_label.set_markup(text)
-        else:
-            row_label.set_text(text)
         item = Gtk.CheckMenuItem()
         item.set_active(status.process_running)
         item.add(row_label)
