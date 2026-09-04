@@ -122,6 +122,25 @@ class EqualityTests(unittest.TestCase):
         self.assertNotEqual(base, changed)
 
 
+class StatusRowMarkupTests(unittest.TestCase):
+    def test_connected_row_is_shrunk_markup_with_a_disconnect_line(self):
+        status = tray.TunnelStatus("tun0", "10.0.0.1", True, True, "gess", "bbodo")
+        text, use_markup = tray.status_row_markup(status)
+        self.assertTrue(use_markup)
+        self.assertIn("bbodo@gess connected on\ntun0 (10.0.0.1)\nDisconnect", text)
+        self.assertIn('size="small"', text)
+
+    def test_connecting_row_also_offers_disconnect(self):
+        status = tray.TunnelStatus(None, None, True, False)
+        text, use_markup = tray.status_row_markup(status)
+        self.assertTrue(use_markup)
+        self.assertIn("Connecting, no tunnel address yet\nDisconnect", text)
+
+    def test_disconnected_row_is_plain_connect(self):
+        status = tray.TunnelStatus(None, None, False, False)
+        self.assertEqual(tray.status_row_markup(status), (tray.CONNECT_LABEL, False))
+
+
 class IconTests(unittest.TestCase):
     def test_states_are_visually_distinct(self):
         states = (

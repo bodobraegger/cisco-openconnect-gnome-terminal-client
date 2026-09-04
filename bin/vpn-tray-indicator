@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shows VPN tunnel state in the GNOME top bar for as long as the tunnel exists.
 
-A dropped tunnel leaves the indicator in place offering Reconnect. Quit stops
+A dropped tunnel leaves the indicator in place offering Connect. Quit stops
 the tunnel, closes the session window with it, and exits.
 """
 
@@ -60,11 +60,15 @@ CONNECTED_ICONS = ("network-vpn-symbolic", "network-vpn", "network-transmit-rece
 CONNECTING_ICONS = ("network-vpn-acquiring-symbolic", "network-vpn", "network-idle")
 DISCONNECTED_ICONS = ("network-vpn-disconnected-symbolic", "network-offline-symbolic", "network-offline")
 FALLBACK_ICON = "network-workgroup"
-RECONNECT_LABEL = "Reconnect..."
+CONNECT_LABEL = "Connect"
 DISCONNECT_LABEL = "Disconnect"
 QUIT_LABEL = "Quit"
 IPV6_BYPASS_WARNING = "Warning: IPv6 is open, traffic may bypass the tunnel"
 IPV6_ORPHAN_WARNING = "Warning: IPv6 still blackholed with no tunnel"
+
+# Shrinks the status/action row's font just enough that its extra Disconnect
+# line still fits without the menu item growing past a single glance.
+STATUS_ROW_MARKUP_SIZE = "small"
 
 # How long Quit waits for the tunnel to actually drop (e.g. a dismissed
 # pkexec prompt) before giving up and leaving the indicator open instead.
@@ -156,6 +160,19 @@ def read_tunnel_status(run_command=_run, read_identity=_read_identity) -> Tunnel
     )
 
 
+def status_row_markup(status: TunnelStatus) -> tuple[str, bool]:
+    """Text (and whether it's Pango markup) for the merged status/action row.
+
+    A running tunnel shows the live status plus an appended Disconnect line,
+    shrunk to fit; once it's fully down there's nothing to report, so the
+    row just offers Connect, styled the same as Quit.
+    """
+    if status.process_running:
+        text = f"{status.summary()}\n{DISCONNECT_LABEL}"
+        return f'<span size="{STATUS_ROW_MARKUP_SIZE}">{GLib.markup_escape_text(text)}</span>', True
+    return CONNECT_LABEL, False
+
+
 def choose_icon(status: TunnelStatus, icon_exists) -> str:
     """First icon the active theme has: AppIndicator shows nothing for a name
     the theme lacks, so candidates are probed rather than assumed."""
@@ -176,11 +193,6 @@ class VpnTrayIndicator:
         self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         self.menu = Gtk.Menu()
         self.indicator.set_menu(self.menu)
-        self.handlers = {
-            DISCONNECT_LABEL: self.on_disconnect,
-            RECONNECT_LABEL: self.on_reconnect,
-            QUIT_LABEL: self.on_quit,
-        }
         self.quit_ticks_remaining = 0
         self.last_status: TunnelStatus | None = None
         self.refresh()
@@ -216,25 +228,39 @@ class VpnTrayIndicator:
         for child in self.menu.get_children():
             self.menu.remove(child)
 
-        labels = [status.summary()]
         if status.connected and not status.ipv6_blackholed:
-            labels.append(IPV6_BYPASS_WARNING)
+            self.menu.append(self._disabled_item(IPV6_BYPASS_WARNING))
         elif not status.process_running and status.ipv6_blackholed:
-            labels.append(IPV6_ORPHAN_WARNING)
-        for label in labels:
-            item = Gtk.MenuItem(label=label)
-            item.set_sensitive(False)
-            self.menu.append(item)
+            self.menu.append(self._disabled_item(IPV6_ORPHAN_WARNING))
 
-        self.menu.append(Gtk.SeparatorMenuItem())
+        self.menu.append(self._build_status_item(status))
 
-        toggle = DISCONNECT_LABEL if status.process_running else RECONNECT_LABEL
-        for label in (toggle, QUIT_LABEL):
-            item = Gtk.MenuItem(label=label)
-            item.connect("activate", self.handlers[label])
-            self.menu.append(item)
+        quit_item = Gtk.MenuItem(label=QUIT_LABEL)
+        quit_item.connect("activate", self.on_quit)
+        self.menu.append(quit_item)
 
         self.menu.show_all()
+
+    @staticmethod
+    def _disabled_item(label: str) -> Gtk.MenuItem:
+        item = Gtk.MenuItem(label=label)
+        item.set_sensitive(False)
+        return item
+
+    def _build_status_item(self, status: TunnelStatus) -> Gtk.MenuItem:
+        """The status row doubles as the Connect/Disconnect action, so there's
+        no separate toggle item to keep the menu down to two rows."""
+        text, use_markup = status_row_markup(status)
+        row_label = Gtk.Label()
+        row_label.set_justify(Gtk.Justification.LEFT)
+        if use_markup:
+            row_label.set_markup(text)
+        else:
+            row_label.set_text(text)
+        item = Gtk.MenuItem()
+        item.add(row_label)
+        item.connect("activate", self.on_disconnect if status.process_running else self.on_reconnect)
+        return item
 
     @staticmethod
     def notify(summary: str, body: str = "") -> None:
